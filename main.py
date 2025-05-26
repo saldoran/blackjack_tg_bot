@@ -1,16 +1,22 @@
 
-import random
+import random, os, time
 from collections import namedtuple
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+)
+
+import settings
+from storage import storage
+from economy import give_daily, reward_player
 
 Card = namedtuple("Card", ["rank", "suit"])
-
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 SUITS = ["♠", "♥", "♦", "♣"]
 
+# ---------------- Blackjack helpers ------------------------------------
 def new_deck():
-    return [Card(rank, suit) for rank in RANKS for suit in SUITS]
+    return [Card(r, s) for r in RANKS for s in SUITS]
 
 def card_value(card: Card):
     if card.rank in ["J", "Q", "K", "10"]:
@@ -20,169 +26,215 @@ def card_value(card: Card):
     return int(card.rank)
 
 def hand_value(hand):
-    value = sum(card_value(c) for c in hand)
+    v = sum(card_value(c) for c in hand)
     aces = sum(1 for c in hand if c.rank == "A")
-    while value > 21 and aces:
-        value -= 10
+    while v > 21 and aces:
+        v -= 10
         aces -= 1
-    return value
+    return v
 
+def fmt_hand(hand):
+    return " ".join(f"{c.rank}{c.suit}" for c in hand)
+
+# ---------------- Game class -------------------------------------------
 class Game:
     def __init__(self):
         self.deck = new_deck()
         random.shuffle(self.deck)
-        self.players = {}  # user_id: {"name": str, "hand": list[Card], "stand": bool, "bust": bool}
+        self.players = {}  # uid -> dict(name, hand, stand, bust)
+        self.dealer = []
         self.started = False
-        self.dealer_hand = []
 
-    def add_player(self, user_id, name):
-        if self.started:
+    def add_player(self, uid, name):
+        if self.started or uid in self.players:
             return False
-        self.players[user_id] = {"name": name, "hand": [], "stand": False, "bust": False}
+        self.players[uid] = {"name": name, "hand": [], "stand": False, "bust": False}
         return True
 
     def deal_initial(self):
         for _ in range(2):
             for p in self.players.values():
                 p["hand"].append(self.deck.pop())
-            self.dealer_hand.append(self.deck.pop())
+            self.dealer.append(self.deck.pop())
 
-    def hit(self, user_id):
-        player = self.players[user_id]
-        player["hand"].append(self.deck.pop())
-        if hand_value(player["hand"]) > 21:
-            player["bust"] = True
-            player["stand"] = True
+    def hit(self, uid):
+        p = self.players[uid]
+        p["hand"].append(self.deck.pop())
+        if hand_value(p["hand"]) > 21:
+            p["bust"] = True
+            p["stand"] = True
 
     def all_done(self):
         return all(p["stand"] for p in self.players.values())
 
     def dealer_play(self):
-        while hand_value(self.dealer_hand) < 17:
-            self.dealer_hand.append(self.deck.pop())
+        while hand_value(self.dealer) < 17:
+            self.dealer.append(self.deck.pop())
 
-    def results(self):
-        dealer_score = hand_value(self.dealer_hand)
+    def results(self, chat_id):
+        dealer_score = hand_value(self.dealer)
         dealer_bust = dealer_score > 21
-        lines = [
-            f"Дилер: {format_hand(self.dealer_hand)} ({dealer_score}{' перебор' if dealer_bust else ''})"
-        ]
-        for p in self.players.values():
+        lines = [f"Дилер: {fmt_hand(self.dealer)} ({dealer_score}{' перебор' if dealer_bust else ''})"]
+        for uid, p in self.players.items():
             score = hand_value(p["hand"])
-            status = 'перебор' if p["bust"] else ''
+            name = p['name']
             if p["bust"]:
-                outcome = 'проигрыш'
+                outcome = 'lose'
             elif dealer_bust or score > dealer_score:
-                outcome = 'победа'
+                outcome = 'win'
             elif score == dealer_score:
-                outcome = 'ничья'
+                outcome = 'draw'
             else:
-                outcome = 'проигрыш'
-            lines.append(f"{p['name']}: {format_hand(p['hand'])} ({score} {status}) → {outcome}")
+                outcome = 'lose'
+            delta = reward_player(chat_id, uid, outcome)
+            sign = "+" if delta >= 0 else "-"
+            if delta == 0:
+                delta_str = "0"
+            else:
+                delta_str = f"{sign}{abs(delta)}"
+            lines.append(
+                f"{name}: {fmt_hand(p['hand'])} ({score}) → {outcome.upper()} ({delta_str} фишек)"
+            )
+        storage.add_game(chat_id)
+        storage.save()
         return "\n".join(lines)
 
-def format_hand(hand):
-    return " ".join(f"{c.rank}{c.suit}" for c in hand)
+# ---------------- Telegram handlers ------------------------------------
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! /newgame чтобы начать новую игру в 21.")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Используй /newgame чтобы начать новую игру в 21 (Blackjack).")
-
-async def newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data['game'] = Game()
-    await update.message.reply_text(
-        "Новая игра создана! Все желающие нажимайте кнопку 'Join'. Когда все готовы, инициатор напишет /deal.",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Join', callback_data='join')]])
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Join", callback_data="join")]])
+    await update.message.reply_text("Новая игра! Нажимайте Join, затем админ введёт /deal.", reply_markup=kb)
 
-async def join_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user = query.from_user
+    await query.answer()
     game: Game = context.chat_data.get('game')
     if not game:
-        await query.answer('Игра не создана.')
+        await query.answer("Игра ещё не создана.", show_alert=True)
         return
-    if game.add_player(user.id, user.first_name):
-        await query.answer('Вы присоединились к игре!')
+    ok = game.add_player(query.from_user.id, query.from_user.first_name)
+    if ok:
+        await query.answer("Вы в игре!")
     else:
-        await query.answer('Игра уже началась либо вы уже в игре.')
+        await query.answer("Не удалось присоединиться.", show_alert=True)
 
-async def deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game: Game = context.chat_data.get('game')
     if not game or game.started:
-        await update.message.reply_text('Игра не создана или уже началась.')
+        await update.message.reply_text("Игра не создана или уже идёт.")
         return
     if not game.players:
-        await update.message.reply_text('Нет игроков.')
+        await update.message.reply_text("Нет игроков.")
         return
     game.started = True
     game.deal_initial()
-    # личные сообщения игрокам
+    # send hands
     for uid, p in game.players.items():
-        await context.bot.send_message(
-            uid,
-            f"Ваши карты: {format_hand(p['hand'])} ({hand_value(p['hand'])}).\n"
-            "В групповом чате используйте /hit чтобы взять карту или /stand чтобы остановиться."
-        )
-    dealer_first = game.dealer_hand[0]
-    await update.message.reply_text(
-        f"Раздача завершена. Первая карта дилера: {dealer_first.rank}{dealer_first.suit}"
-    )
+        msg = f"Ваши карты: {fmt_hand(p['hand'])} ({hand_value(p['hand'])}).\n/hit или /stand в чате."
+        try:
+            await context.bot.send_message(uid, msg)
+        except:
+            await update.message.reply_text(f"Не удалось отправить сообщения {p['name']} (приватность).")
+    dealer_first = game.dealer[0]
+    await update.message.reply_text(f"Раздача! Первая карта дилера: {dealer_first.rank}{dealer_first.suit}")
 
-async def hit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+async def cmd_hit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game: Game = context.chat_data.get('game')
     if not game or not game.started:
         return
-    if user.id not in game.players:
+    uid = update.effective_user.id
+    if uid not in game.players:
         return
-    if game.players[user.id]['stand']:
-        await update.message.reply_text('Вы уже остановились.')
+    if game.players[uid]["stand"]:
+        await update.message.reply_text("Вы уже остановились.")
         return
-    game.hit(user.id)
-    player = game.players[user.id]
-    await update.message.reply_text(
-        f"Ваши карты: {format_hand(player['hand'])} ({hand_value(player['hand'])})"
-    )
-    if player['bust']:
-        await update.message.reply_text('Перебор! Вы выбываете.')
+    game.hit(uid)
+    p = game.players[uid]
+    await update.message.reply_text(f"{fmt_hand(p['hand'])} ({hand_value(p['hand'])})")
+    if p["bust"]:
+        await update.message.reply_text("Перебор!")
     if game.all_done():
         await finish_game(update, context)
 
-async def stand(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+async def cmd_stand(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game: Game = context.chat_data.get('game')
     if not game or not game.started:
         return
-    if user.id not in game.players:
+    uid = update.effective_user.id
+    if uid not in game.players:
         return
-    game.players[user.id]['stand'] = True
-    await update.message.reply_text('Вы остановились.')
+    game.players[uid]["stand"] = True
+    await update.message.reply_text("Вы остановились.")
     if game.all_done():
         await finish_game(update, context)
 
 async def finish_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game: Game = context.chat_data.get('game')
+    chat_id = update.effective_chat.id
     game.dealer_play()
-    result = game.results()
-    await context.bot.send_message(update.effective_chat.id, "Игра окончена!\n" + result)
+    txt = game.results(chat_id)
+    await context.bot.send_message(chat_id, "Игра окончена!\n" + txt)
     context.chat_data['game'] = None
 
+# -------- Economy commands --------------------------------------------
+async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    chat_id = update.effective_chat.id
+    ok, remaining = give_daily(chat_id, uid)
+    if ok:
+        money = storage.get_user(chat_id, uid)['money']
+        await update.message.reply_text(f"💰 +{settings.DAILY_BONUS}! Ваш баланс: {money}")
+    else:
+        await update.message.reply_text(f"Бонус уже получен. Попробуйте через {remaining} ч.")
+
+async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    chat_id = update.effective_chat.id
+    user = storage.get_user(chat_id, uid, update.effective_user.first_name)
+    await update.message.reply_text(
+        f"Баланс: {user['money']} фишек\nПобед: {user['wins']}\nИгр: {user['games']}"
+    )
+
+async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    top = storage.leaderboard(chat_id, key="money", limit=5)
+    lines = ["🏆 Top-5 по фишкам:"]
+    for i, u in enumerate(top, 1):
+        lines.append(f"{i}. {u['name']} — {u['money']} фишек (побед {u['wins']})")
+    await update.message.reply_text("\n".join(lines))
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    chat = storage.chat_stats(chat_id)
+    await update.message.reply_text(
+        f"Всего игр сыграно: {chat['games_played']}"
+    )
+
+# ---------------- Main -------------------------------------------------
 def main():
-    import os
-    token = os.getenv('TG_BOT_TOKEN')
+    token = os.getenv("TG_BOT_TOKEN")
     if not token:
-        raise RuntimeError('Необходимо установить переменную окружения TG_BOT_TOKEN с токеном вашего бота')
+        raise RuntimeError("Установите TG_BOT_TOKEN")
     app = ApplicationBuilder().token(token).build()
 
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('newgame', newgame))
-    app.add_handler(CallbackQueryHandler(join_cb, pattern='^join$'))
-    app.add_handler(CommandHandler('deal', deal))
-    app.add_handler(CommandHandler('hit', hit))
-    app.add_handler(CommandHandler('stand', stand))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("newgame", cmd_newgame))
+    app.add_handler(CallbackQueryHandler(cb_join, pattern="^join$"))
+    app.add_handler(CommandHandler("deal", cmd_deal))
+    app.add_handler(CommandHandler("hit", cmd_hit))
+    app.add_handler(CommandHandler("stand", cmd_stand))
 
-    print('Bot is running...')
+    # Economy
+    app.add_handler(CommandHandler("daily", cmd_daily))
+    app.add_handler(CommandHandler("balance", cmd_balance))
+    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+
+    print("Bot up...")
     app.run_polling()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
