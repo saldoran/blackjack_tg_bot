@@ -1,11 +1,25 @@
 {
   "-1001516543619": {
-    "games_played": 1,
+    "games_played": 4,
     "users": {
       "274343007": {
         "name": "Anon",
-        "money": -25,
+        "money": 75,
+        "wins": 1,
+        "games": 0,
+        "last_daily": 1748531664.060402
+      },
+      "1658632506": {
+        "name": "Anon",
+        "money": 100,
         "wins": 0,
+        "games": 0,
+        "last_daily": 1748531664.1878889
+      },
+      "7025974125": {
+        "name": "Anon",
+        "money": 75,
+        "wins": 2,
         "games": 0,
         "last_daily": 0
       }
