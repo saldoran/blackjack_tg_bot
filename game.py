@@ -7,7 +7,7 @@ from storage import storage
 # Описание карт
 Card = namedtuple("Card", ["rank", "suit"])
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
-SUITS = ["♠", "♥", "♦", "♣"]
+SUITS = ["♠️", "♥️", "♦️", "♣️"]
 
 # Хелперы для расчёта очков
 def new_deck():

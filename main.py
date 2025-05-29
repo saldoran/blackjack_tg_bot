@@ -63,6 +63,9 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not game.add_player(user.id, user.first_name):
         return await query.answer("Вы уже в игре.", show_alert=True)
+        
+    storage.get_user(group_id, user.id, user.first_name)
+    storage.save()
 
     try:
         await context.bot.send_message(
@@ -131,6 +134,25 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
     first = game.dealer[0]
     await context.bot.send_message(group_id, f"Первая карта дилера: {first.rank}{first.suit}")
 
+async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    # достаём и удаляем игру
+    game: Game = context.application.chat_data[chat_id].pop('game', None)
+    if not game:
+        return
+
+    # Итог для чата
+    result = game.results(chat_id)
+    await context.bot.send_message(chat_id, "🃏 Игра окончена!\n" + result)
+
+    # Личный баланс каждому игроку
+    for uid in game.players:
+        user = storage.get_user(chat_id, uid)
+        bal = user['money']
+        try:
+            await context.bot.send_message(uid, f"Ваш текущий баланс: {bal}💳")
+        except Forbidden:
+            # если нельзя писать в личку – пропускаем
+            pass
 
 async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -193,11 +215,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если после хода все закончили — подводим итоги в группе
     if game.all_done():
         game.dealer_play()
-        result = game.results(group_id)
-        await context.bot.send_message(group_id, "Игра окончена!\n" + result)
-        # сбрасываем игру
-        context.application.chat_data[group_id]['game'] = None
-
+        await finish_game_group(context, group_id)
 
 async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
@@ -246,9 +264,9 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     top = storage.leaderboard(group_id, key="money", limit=5)
-    lines = ["🏆 Топ-5 по фишкам:"]
+    lines = ["🏆 Топ-5 лидеров:"]
     for i, u in enumerate(top, 1):
-        lines.append(f"{i}. {u['name']} — {u['money']} фишек (побед {u['wins']})")
+        lines.append(f"{i}. {u['name']}")
     await update.message.reply_text("\n".join(lines))
 
 
