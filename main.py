@@ -1,4 +1,4 @@
-
+from dotenv import load_dotenv
 import random, os, time
 from collections import namedtuple
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -9,6 +9,7 @@ from telegram.ext import (
 import settings
 from storage import storage
 from economy import give_daily, reward_player
+load_dotenv()
 
 Card = namedtuple("Card", ["rank", "suit"])
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -127,8 +128,13 @@ async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Игра не создана или уже идёт.")
         return
     if not game.players:
-        await update.message.reply_text("Нет игроков.")
+        await update.message.reply_text("Нет игроков — никто не нажал Join.")
         return
+
+    player_names = [p["name"] for p in game.players.values()]
+    await update.message.reply_text(
+        "Игроки в партии: " + ", ".join(player_names)
+    )
     game.started = True
     game.deal_initial()
     # send hands
