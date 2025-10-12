@@ -367,8 +367,7 @@ async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     ok, rem = give_daily(group_id, uid)
     if ok:
-        bal = storage.get_user(group_id, uid)['money']
-        await update.message.reply_text(f"💰 +{settings.DAILY_BONUS}! Ваш баланс: {bal}")
+        await update.message.reply_text(f"💰 +{settings.DAILY_BONUS} фишек!")
     else:
         await update.message.reply_text(f"Бонус уже получен. Попробуйте через {rem} ч.")
 
