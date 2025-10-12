@@ -33,10 +33,10 @@ jobs:
             echo "🚀 Начинаем деплой..."
             
             # Создаем структуру директорий если её нет
-            mkdir -p /Home/bots
+            mkdir -p /home/bots
             
             # Переходим в директорию ботов
-            cd /Home/bots
+            cd /home/bots
             
             # Если репозиторий не существует, клонируем его
             if [ ! -d "blackjack_bot/.git" ]; then
@@ -60,7 +60,7 @@ jobs:
             # Создаем виртуальное окружение если его нет
             if [ ! -d "../../venv" ]; then
               echo "🐍 Создаем виртуальное окружение..."
-              cd /Home
+              cd /home
               python3 -m venv venv
               source venv/bin/activate
               pip install --upgrade pip
