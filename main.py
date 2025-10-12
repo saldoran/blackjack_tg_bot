@@ -386,6 +386,7 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     c = storage.chat_stats(group_id)
@@ -496,7 +497,7 @@ def main():
 
     app.add_handler(CommandHandler("daily", cmd_daily))
     app.add_handler(CommandHandler("balance", cmd_balance))
-    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("top", cmd_leaderboard))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("setprice", cmd_setprice))
     app.add_handler(CommandHandler("autogame", cmd_autogame))    
