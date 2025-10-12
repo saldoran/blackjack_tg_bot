@@ -462,8 +462,15 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.application.stop_running()
 
 async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тоггл автозапуска игр"""
+    """Тоггл автозапуска игр (только для админа)"""
+    user_id = update.effective_user.id
     group_id = update.effective_chat.id
+    
+    if not is_admin(user_id):
+        logger.warning(f"Non-admin user {user_id} tried to use /autogame command")
+        return await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+    
+    logger.info(f"Admin {user_id} used /autogame command in group {group_id}")
     
     # Получаем настройки из storage (сохраняются между перезапусками)
     group_data = storage._data.get(str(group_id), {})
