@@ -457,9 +457,11 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем есть ли достаточно игроков с деньгами
     users_with_money = 0
-    for user_id, user_data in storage._data.get(str(group_id), {}).items():
-        if user_id != 'stats' and user_data.get('money', 0) >= price:
-            users_with_money += 1
+    group_data = storage._data.get(str(group_id), {})
+    if 'users' in group_data:
+        for user_id, user_data in group_data['users'].items():
+            if isinstance(user_data, dict) and user_data.get('money', 0) >= price:
+                users_with_money += 1
     
     if users_with_money < min_players:
         await context.bot.send_message(
