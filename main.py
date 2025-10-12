@@ -35,6 +35,36 @@ def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! /newgame чтобы начать новую игру в 21.")
 
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать справку по командам"""
+    help_text = """🃏 <b>Blackjack Bot - Справка по командам</b>
+
+<b>🎮 Игровые команды:</b>
+/newgame - создать новую игру (админ)
+Join - присоединиться к игре (игрок)
+/deal - начать раздачу карт (админ)
+/hit - взять карту (игрок)
+/stand - остановиться (игрок)
+
+<b>💰 Экономика:</b>
+/daily - получить ежедневный бонус (любой)
+/balance - мой баланс и статистика (любой)
+/leaderboard - топ-5 по деньгам (любой)
+/stats - сколько игр сыграно в чате (любой)
+
+<b>⚙️ Настройки:</b>
+/setprice &lt;ставка&gt; - установить ставку для игры (админ)
+/autogame - настройки автозапуска игр (админ)
+
+<b>ℹ️ Как играть:</b>
+1. Админ создает игру командой /newgame
+2. Игроки нажимают Join для участия
+3. Админ начинает раздачу командой /deal
+4. Игроки получают карты в личку и делают ходы
+5. Победитель получает награду!"""
+    
+    await update.message.reply_text(help_text, parse_mode='HTML')
+
 
 async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
@@ -515,6 +545,7 @@ def main():
     app = ApplicationBuilder().token(token).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("newgame", cmd_newgame))
     app.add_handler(CallbackQueryHandler(cb_join, pattern="^join$"))
     app.add_handler(CallbackQueryHandler(cb_action, pattern="^(hit|stand):"))
