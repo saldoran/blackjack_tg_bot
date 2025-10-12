@@ -393,41 +393,26 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Управление автозапуском игр"""
+    """Тоггл автозапуска игр"""
     group_id = update.effective_chat.id
     
-    if not context.args:
-        # Показать текущие настройки
-        enabled = context.chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
-        interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-        price = context.chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
-        
-        status = "✅ Включен" if enabled else "❌ Выключен"
-        hours = interval // 3600
-        minutes = (interval % 3600) // 60
-        
-        text = f"""🎰 <b>Настройки автозапуска игр</b>
-
-{status}
-⏰ Интервал: {hours}ч {minutes}м
-💰 Ставка: {price}💳
-
-<b>Команды:</b>
-/autogame on - включить автозапуск
-/autogame off - выключить автозапуск
-/autogame interval <минуты> - установить интервал
-/autogame price <ставка> - установить ставку"""
-        
-        await update.message.reply_text(text, parse_mode='HTML')
-        return
+    # Получаем текущее состояние
+    enabled = context.chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
+    interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+    price = context.chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
     
-    command = context.args[0].lower()
-    
-    if command == "on":
+    # Переключаем состояние
+    if enabled:
+        # Выключаем
+        context.chat_data['auto_game_enabled'] = False
+        if context.chat_data.get('auto_game_job'):
+            context.chat_data['auto_game_job'].schedule_removal()
+            context.chat_data['auto_game_job'] = None
+        await update.message.reply_text("❌ Автозапуск игр выключен!")
+    else:
+        # Включаем
         context.chat_data['auto_game_enabled'] = True
-        # Запускаем автозапуск если его еще нет
         if not context.chat_data.get('auto_game_job'):
-            interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
             job = context.job_queue.run_repeating(
                 auto_start_game,
                 interval=interval,
@@ -435,52 +420,10 @@ async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 first=interval
             )
             context.chat_data['auto_game_job'] = job
-        await update.message.reply_text("✅ Автозапуск игр включен!")
         
-    elif command == "off":
-        context.chat_data['auto_game_enabled'] = False
-        # Останавливаем автозапуск
-        if context.chat_data.get('auto_game_job'):
-            context.chat_data['auto_game_job'].schedule_removal()
-            context.chat_data['auto_game_job'] = None
-        await update.message.reply_text("❌ Автозапуск игр выключен!")
-        
-    elif command == "interval" and len(context.args) > 1:
-        try:
-            minutes = int(context.args[1])
-            if minutes < 1:
-                return await update.message.reply_text("❌ Интервал должен быть больше 0 минут")
-            
-            interval = minutes * 60
-            context.chat_data['auto_game_interval'] = interval
-            
-            # Перезапускаем автозапуск с новым интервалом
-            if context.chat_data.get('auto_game_job'):
-                context.chat_data['auto_game_job'].schedule_removal()
-                job = context.job_queue.run_repeating(
-                    auto_start_game,
-                    interval=interval,
-                    chat_id=group_id,
-                    first=interval
-                )
-                context.chat_data['auto_game_job'] = job
-            
-            await update.message.reply_text(f"⏰ Интервал автозапуска установлен: {minutes} минут")
-        except ValueError:
-            await update.message.reply_text("❌ Неверный формат времени. Используйте: /autogame interval <минуты>")
-            
-    elif command == "price" and len(context.args) > 1:
-        try:
-            price = int(context.args[1])
-            if price < 0:
-                return await update.message.reply_text("❌ Ставка не может быть отрицательной")
-            
-            context.chat_data['auto_game_price'] = price
-            await update.message.reply_text(f"💰 Ставка для автозапуска установлена: {price}💳")
-        except ValueError:
-            await update.message.reply_text("❌ Неверный формат ставки. Используйте: /autogame price <ставка>")
-    else:
-        await update.message.reply_text("❌ Неизвестная команда. Используйте: /autogame on/off/interval/price")
+        hours = interval // 3600
+        minutes = (interval % 3600) // 60
+        await update.message.reply_text(f"✅ Автозапуск игр включен!\n⏰ Интервал: {hours}ч {minutes}м\n💰 Ставка: {price}💳")
 
 
 async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
