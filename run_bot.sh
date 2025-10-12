@@ -24,7 +24,7 @@ mkdir -p logs
 source ../../venv/bin/activate
 
 # Запускаем бота в фоне
-nohup python main.py > logs/bot.log 2>&1 &
+nohup python main.py >> logs/bot.log 2>&1 &
 
 # Сохраняем PID
 echo $! > "$PID_FILE"
