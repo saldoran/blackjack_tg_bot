@@ -28,6 +28,20 @@ def is_admin(user_id: int) -> bool:
     if not admin_id:
         return False
     return user_id == int(admin_id)
+
+def admin_only(func):
+    """Декоратор для команд только для админа"""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        
+        if not is_admin(user_id):
+            logger.warning(f"Non-admin user {user_id} tried to use /{func.__name__.replace('cmd_', '')} command")
+            return await update.message.reply_text("❌ У вас нет прав для использования этого бота.")
+        
+        logger.info(f"Admin {user_id} used /{func.__name__.replace('cmd_', '')} command")
+        return await func(update, context)
+    
+    return wrapper
 from storage import storage
 from economy import give_daily, reward_player
 from game import Game, fmt_hand, hand_value
@@ -47,9 +61,11 @@ def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+@admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! /newgame чтобы начать новую игру в 21.")
 
+@admin_only
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать справку по командам"""
     help_text = """🃏 <b>Blackjack Bot - Справка по командам</b>
@@ -81,15 +97,12 @@ Join - присоединиться к игре (игрок)
     await update.message.reply_text(help_text, parse_mode='HTML')
 
 
+@admin_only
 async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    logger.info(f"New game requested by user {user_id} in group {group_id}")
     
     # Проверяем, не запущена ли уже игра
     if context.chat_data.get('game'):
-        logger.info(f"Game already active in group {group_id}")
         return await update.message.reply_text("⚠️ Игра уже запущена! Дождитесь окончания текущей игры.")
     
     game = Game()
@@ -113,11 +126,9 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=group_id
     )
 
+@admin_only
 async def cmd_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить цену (ставку) для новой партии."""
-    owner = context.chat_data.get('owner_id')
-    if update.effective_user.id != owner:
-        return await update.message.reply_text("⚠ Только инициатор игры может менять ставку.")
 
     # парсим аргумент
     if not context.args or not context.args[0].isdigit():
@@ -171,9 +182,19 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # если не удалось в личку — отменяем
         game.players.pop(user.id, None)
         await query.answer()
+        
+        # Создаем кнопку со ссылкой на бота
+        bot_username = context.bot.username
+        start_url = f"https://t.me/{bot_username}?start=start"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎮 Начать игру", url=start_url)]
+        ])
+        
         return await context.bot.send_message(
             group_id,
-            f"👤 {user.first_name}, напишите боту /start в личку, чтобы играть."
+            f"👤 {user.first_name}, нажмите кнопку ниже, чтобы начать игру!",
+            reply_markup=keyboard
         )
 
     # 6) Публичное сообщение и обновление кнопки
@@ -390,6 +411,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         game.dealer_play()
         await finish_game_group(context, group_id)
 
+@admin_only
 async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     game: Game = context.chat_data.get('game')
@@ -414,6 +436,7 @@ async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Первая карта дилера: {first.rank}{first.suit}")
 
 
+@admin_only
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     group_id = update.effective_chat.id
@@ -424,6 +447,7 @@ async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Бонус уже получен. Попробуйте через {rem} ч.")
 
 
+@admin_only
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     group_id = update.effective_chat.id
@@ -443,34 +467,23 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+@admin_only
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     c = storage.chat_stats(group_id)
     await update.message.reply_text(f"Всего игр сыграно: {c['games_played']}")
 
 
+@admin_only
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Остановить бота (только для админа)"""
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        logger.warning(f"Non-admin user {user_id} tried to use /stop command")
-        return await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
-    
-    logger.info(f"Admin {user_id} requested bot stop")
     await update.message.reply_text("🛑 Останавливаю бота...")
     context.application.stop_running()
 
+@admin_only
 async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тоггл автозапуска игр (только для админа)"""
-    user_id = update.effective_user.id
     group_id = update.effective_chat.id
-    
-    if not is_admin(user_id):
-        logger.warning(f"Non-admin user {user_id} tried to use /autogame command")
-        return await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
-    
-    logger.info(f"Admin {user_id} used /autogame command in group {group_id}")
     
     # Получаем настройки из storage (сохраняются между перезапусками)
     group_data = storage._data.get(str(group_id), {})
