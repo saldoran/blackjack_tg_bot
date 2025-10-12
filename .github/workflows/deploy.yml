@@ -83,6 +83,12 @@ jobs:
             echo "🔧 Настраиваем скрипты..."
             chmod +x *.sh
             
+            # Создаем .env файл если его нет
+            if [ ! -f ".env" ]; then
+              echo "📝 Создаем .env файл..."
+              echo "TG_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+            fi
+            
             # Перезапускаем бота
             echo "🔄 Перезапускаем бота..."
             ./stop_bot.sh
