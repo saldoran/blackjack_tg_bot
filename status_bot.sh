@@ -1,8 +1,10 @@
 #!/bin/bash
-PID_FILE="/tmp/blackjack_bot.pid"
+BOT_NAME="blackjack_bot"
+PID_FILE="/tmp/${BOT_NAME}.pid"
+
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
+    if ps -p "$PID" > /dev/null 2>&1; then
         echo "RUNNING:$PID"
     else
         echo "STOPPED"

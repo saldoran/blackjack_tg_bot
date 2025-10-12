@@ -397,22 +397,29 @@ async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тоггл автозапуска игр"""
     group_id = update.effective_chat.id
     
-    # Получаем текущее состояние
-    enabled = context.chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
-    interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-    price = context.chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
+    # Получаем настройки из storage (сохраняются между перезапусками)
+    group_data = storage.data.get(str(group_id), {})
+    enabled = group_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
+    interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+    price = group_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
     
     # Переключаем состояние
     if enabled:
         # Выключаем
-        context.chat_data['auto_game_enabled'] = False
+        group_data['auto_game_enabled'] = False
+        storage.data[str(group_id)] = group_data
+        storage.save()
+        
         if context.chat_data.get('auto_game_job'):
             context.chat_data['auto_game_job'].schedule_removal()
             context.chat_data['auto_game_job'] = None
         await update.message.reply_text("❌ Автозапуск игр выключен!")
     else:
         # Включаем
-        context.chat_data['auto_game_enabled'] = True
+        group_data['auto_game_enabled'] = True
+        storage.data[str(group_id)] = group_data
+        storage.save()
+        
         if not context.chat_data.get('auto_game_job'):
             job = context.job_queue.run_repeating(
                 auto_start_game,
@@ -431,18 +438,21 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     """Автоматический запуск игры"""
     job = context.job
     group_id = job.chat_id
-    chat_data = context.application.chat_data.get(group_id, {})
+    
+    # Получаем настройки из storage
+    group_data = storage.data.get(str(group_id), {})
     
     # Проверяем включен ли автозапуск
-    if not chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED):
+    if not group_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED):
         return
     
     # Проверяем что нет активной игры
+    chat_data = context.application.chat_data.get(group_id, {})
     if chat_data.get('game'):
         return
     
     # Получаем настройки
-    price = chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
+    price = group_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
     min_players = settings.AUTO_GAME_MIN_PLAYERS
     
     # Проверяем есть ли достаточно игроков с деньгами
@@ -482,11 +492,37 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def restore_autogame_jobs(application):
+    """Восстанавливаем автозапуск игр при старте бота"""
+    for group_id_str, group_data in storage.data.items():
+        if group_id_str == 'stats':
+            continue
+            
+        if group_data.get('auto_game_enabled', False):
+            group_id = int(group_id_str)
+            interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+            
+            # Запускаем автозапуск
+            job = application.job_queue.run_repeating(
+                auto_start_game,
+                interval=interval,
+                chat_id=group_id,
+                first=interval
+            )
+            
+            # Сохраняем job в chat_data
+            if group_id not in application.chat_data:
+                application.chat_data[group_id] = {}
+            application.chat_data[group_id]['auto_game_job'] = job
+
 def main():
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
         raise RuntimeError("Установите TG_BOT_TOKEN")
     app = ApplicationBuilder().token(token).build()
+    
+    # Восстанавливаем автозапуск при старте
+    app.job_queue.run_once(lambda context: restore_autogame_jobs(context.application), when=5)
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
