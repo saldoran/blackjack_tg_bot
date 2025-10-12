@@ -166,19 +166,7 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb
     )
 
-    # 7) Запланировать таймеры хода
-    # предупреждение через 30 секунд
-    context.job_queue.run_once(
-        player_warning,
-        when=PLAYER_WARN_TIMEOUT,
-        chat_id=user.id
-    )
-    # окончательный таймаут через 45 секунд (30+15)
-    context.job_queue.run_once(
-        partial(player_timeout, group_id=group_id),
-        when=PLAYER_EXPIRE_TIMEOUT,
-        chat_id=user.id
-    )
+    # Таймеры хода будут запущены после раздачи карт в close_registration
 
 
 async def close_registration(context: ContextTypes.DEFAULT_TYPE):
@@ -218,6 +206,21 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
             uid,
             f"Ваши карты: {fmt_hand(p['hand'])} ({hand_value(p['hand'])})",
             reply_markup=make_private_kb(group_id)
+        )
+        
+        # Запускаем таймеры хода для каждого игрока
+        # предупреждение через 30 секунд
+        context.job_queue.run_once(
+            player_warning,
+            when=PLAYER_WARN_TIMEOUT,
+            chat_id=uid
+        )
+        # окончательный таймаут через 45 секунд (30+15)
+        context.job_queue.run_once(
+            partial(player_timeout, group_id=group_id),
+            when=PLAYER_EXPIRE_TIMEOUT,
+            chat_id=uid,
+            name=f"player_timeout_{uid}"
         )
 
     first = game.dealer[0]
