@@ -398,7 +398,7 @@ async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     
     # Получаем настройки из storage (сохраняются между перезапусками)
-    group_data = storage.data.get(str(group_id), {})
+    group_data = storage._data.get(str(group_id), {})
     enabled = group_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
     interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
     price = group_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
@@ -407,7 +407,7 @@ async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if enabled:
         # Выключаем
         group_data['auto_game_enabled'] = False
-        storage.data[str(group_id)] = group_data
+        storage._data[str(group_id)] = group_data
         storage.save()
         
         if context.chat_data.get('auto_game_job'):
@@ -417,7 +417,7 @@ async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Включаем
         group_data['auto_game_enabled'] = True
-        storage.data[str(group_id)] = group_data
+        storage._data[str(group_id)] = group_data
         storage.save()
         
         if not context.chat_data.get('auto_game_job'):
@@ -440,7 +440,7 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     group_id = job.chat_id
     
     # Получаем настройки из storage
-    group_data = storage.data.get(str(group_id), {})
+    group_data = storage._data.get(str(group_id), {})
     
     # Проверяем включен ли автозапуск
     if not group_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED):
@@ -457,7 +457,7 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем есть ли достаточно игроков с деньгами
     users_with_money = 0
-    for user_id, user_data in storage.data.get(str(group_id), {}).items():
+    for user_id, user_data in storage._data.get(str(group_id), {}).items():
         if user_id != 'stats' and user_data.get('money', 0) >= price:
             users_with_money += 1
     
@@ -492,28 +492,6 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def restore_autogame_jobs(application):
-    """Восстанавливаем автозапуск игр при старте бота"""
-    for group_id_str, group_data in storage.data.items():
-        if group_id_str == 'stats':
-            continue
-            
-        if group_data.get('auto_game_enabled', False):
-            group_id = int(group_id_str)
-            interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-            
-            # Запускаем автозапуск
-            job = application.job_queue.run_repeating(
-                auto_start_game,
-                interval=interval,
-                chat_id=group_id,
-                first=interval
-            )
-            
-            # Сохраняем job в chat_data
-            if group_id not in application.chat_data:
-                application.chat_data[group_id] = {}
-            application.chat_data[group_id]['auto_game_job'] = job
 
 def main():
     token = os.getenv("TG_BOT_TOKEN")
@@ -521,8 +499,6 @@ def main():
         raise RuntimeError("Установите TG_BOT_TOKEN")
     app = ApplicationBuilder().token(token).build()
     
-    # Восстанавливаем автозапуск при старте
-    app.job_queue.run_once(lambda context: restore_autogame_jobs(context.application), when=5)
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
