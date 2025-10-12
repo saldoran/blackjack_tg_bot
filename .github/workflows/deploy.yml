@@ -32,21 +32,43 @@ jobs:
             set -e
             echo "🚀 Начинаем деплой..."
             
-            # Переходим в директорию проекта
-            cd /home/ubuntu/Documents/projects/blackjack_tg_bot
+            # Создаем структуру директорий если её нет
+            mkdir -p /Home/bots
             
-            # Сохраняем текущий коммит для отката
-            CURRENT_COMMIT=$(git rev-parse HEAD)
-            echo "Текущий коммит: $CURRENT_COMMIT"
+            # Переходим в директорию бота
+            cd /Home/bots/blackjack_bot
             
-            # Обновляем код
-            echo "📥 Получаем обновления..."
-            git fetch origin
-            git reset --hard origin/main
+            # Если репозиторий не существует, клонируем его
+            if [ ! -d ".git" ]; then
+              echo "📥 Клонируем репозиторий..."
+              cd /Home/bots
+              rm -rf blackjack_bot
+              git clone https://github.com/saldoran/blackjack_tg_bot.git blackjack_bot
+              cd blackjack_bot
+            else
+              # Сохраняем текущий коммит для отката
+              CURRENT_COMMIT=$(git rev-parse HEAD)
+              echo "Текущий коммит: $CURRENT_COMMIT"
+              
+              # Обновляем код
+              echo "📥 Получаем обновления..."
+              git fetch origin
+              git reset --hard origin/main
+            fi
             
-            # Активируем виртуальное окружение
-            echo "🐍 Активируем виртуальное окружение..."
-            source ../../venv/bin/activate
+            # Создаем виртуальное окружение если его нет
+            if [ ! -d "../../venv" ]; then
+              echo "🐍 Создаем виртуальное окружение..."
+              cd /Home
+              python3 -m venv venv
+              source venv/bin/activate
+              pip install --upgrade pip
+              cd bots/blackjack_bot
+            else
+              # Активируем виртуальное окружение
+              echo "🐍 Активируем виртуальное окружение..."
+              source ../../venv/bin/activate
+            fi
             
             # Обновляем зависимости
             echo "📦 Обновляем зависимости..."
@@ -55,6 +77,10 @@ jobs:
             # Проверяем синтаксис Python файлов
             echo "🔍 Проверяем синтаксис..."
             python -m py_compile main.py game.py economy.py storage.py settings.py
+            
+            # Делаем скрипты исполняемыми
+            echo "🔧 Настраиваем скрипты..."
+            chmod +x *.sh
             
             # Перезапускаем бота через Sentinel
             echo "🔄 Перезапускаем бота через Sentinel..."
