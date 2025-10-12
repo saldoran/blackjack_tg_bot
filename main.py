@@ -68,6 +68,11 @@ Join - присоединиться к игре (игрок)
 
 async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
+    
+    # Проверяем, не запущена ли уже игра
+    if context.chat_data.get('game'):
+        return await update.message.reply_text("⚠️ Игра уже запущена! Дождитесь окончания текущей игры.")
+    
     game = Game()
     context.chat_data['game'] = game
     context.chat_data['owner_id'] = update.effective_user.id
