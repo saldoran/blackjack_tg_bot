@@ -12,3 +12,9 @@ PLAYER_EXPIRE_TIMEOUT = 45
 
 # Файл, где хранится статистика (создаётся автоматически)
 STATS_FILE = 'storage.json'
+
+# Настройки автозапуска игр
+AUTO_GAME_ENABLED = False        # включен ли автозапуск
+AUTO_GAME_INTERVAL = 3600       # интервал в секундах (по умолчанию 1 час)
+AUTO_GAME_PRICE = 20            # ставка для автозапуска
+AUTO_GAME_MIN_PLAYERS = 2       # минимальное количество игроков для автозапуска

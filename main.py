@@ -17,6 +17,7 @@ from storage import storage
 from economy import give_daily, reward_player
 from game import Game, fmt_hand, hand_value
 from functools import partial
+import asyncio
 
 load_dotenv()
 
@@ -361,6 +362,152 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Всего игр сыграно: {c['games_played']}")
 
 
+async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Управление автозапуском игр"""
+    group_id = update.effective_chat.id
+    
+    if not context.args:
+        # Показать текущие настройки
+        enabled = context.chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
+        interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+        price = context.chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
+        
+        status = "✅ Включен" if enabled else "❌ Выключен"
+        hours = interval // 3600
+        minutes = (interval % 3600) // 60
+        
+        text = f"""🎰 <b>Настройки автозапуска игр</b>
+
+{status}
+⏰ Интервал: {hours}ч {minutes}м
+💰 Ставка: {price}💳
+
+<b>Команды:</b>
+/autogame on - включить автозапуск
+/autogame off - выключить автозапуск
+/autogame interval <минуты> - установить интервал
+/autogame price <ставка> - установить ставку"""
+        
+        await update.message.reply_text(text, parse_mode='HTML')
+        return
+    
+    command = context.args[0].lower()
+    
+    if command == "on":
+        context.chat_data['auto_game_enabled'] = True
+        # Запускаем автозапуск если его еще нет
+        if not context.chat_data.get('auto_game_job'):
+            interval = context.chat_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+            job = context.job_queue.run_repeating(
+                auto_start_game,
+                interval=interval,
+                chat_id=group_id,
+                first=interval
+            )
+            context.chat_data['auto_game_job'] = job
+        await update.message.reply_text("✅ Автозапуск игр включен!")
+        
+    elif command == "off":
+        context.chat_data['auto_game_enabled'] = False
+        # Останавливаем автозапуск
+        if context.chat_data.get('auto_game_job'):
+            context.chat_data['auto_game_job'].schedule_removal()
+            context.chat_data['auto_game_job'] = None
+        await update.message.reply_text("❌ Автозапуск игр выключен!")
+        
+    elif command == "interval" and len(context.args) > 1:
+        try:
+            minutes = int(context.args[1])
+            if minutes < 1:
+                return await update.message.reply_text("❌ Интервал должен быть больше 0 минут")
+            
+            interval = minutes * 60
+            context.chat_data['auto_game_interval'] = interval
+            
+            # Перезапускаем автозапуск с новым интервалом
+            if context.chat_data.get('auto_game_job'):
+                context.chat_data['auto_game_job'].schedule_removal()
+                job = context.job_queue.run_repeating(
+                    auto_start_game,
+                    interval=interval,
+                    chat_id=group_id,
+                    first=interval
+                )
+                context.chat_data['auto_game_job'] = job
+            
+            await update.message.reply_text(f"⏰ Интервал автозапуска установлен: {minutes} минут")
+        except ValueError:
+            await update.message.reply_text("❌ Неверный формат времени. Используйте: /autogame interval <минуты>")
+            
+    elif command == "price" and len(context.args) > 1:
+        try:
+            price = int(context.args[1])
+            if price < 0:
+                return await update.message.reply_text("❌ Ставка не может быть отрицательной")
+            
+            context.chat_data['auto_game_price'] = price
+            await update.message.reply_text(f"💰 Ставка для автозапуска установлена: {price}💳")
+        except ValueError:
+            await update.message.reply_text("❌ Неверный формат ставки. Используйте: /autogame price <ставка>")
+    else:
+        await update.message.reply_text("❌ Неизвестная команда. Используйте: /autogame on/off/interval/price")
+
+
+async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
+    """Автоматический запуск игры"""
+    job = context.job
+    group_id = job.chat_id
+    chat_data = context.application.chat_data.get(group_id, {})
+    
+    # Проверяем включен ли автозапуск
+    if not chat_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED):
+        return
+    
+    # Проверяем что нет активной игры
+    if chat_data.get('game'):
+        return
+    
+    # Получаем настройки
+    price = chat_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
+    min_players = settings.AUTO_GAME_MIN_PLAYERS
+    
+    # Проверяем есть ли достаточно игроков с деньгами
+    users_with_money = 0
+    for user_id, user_data in storage.data.get(str(group_id), {}).items():
+        if user_id != 'stats' and user_data.get('money', 0) >= price:
+            users_with_money += 1
+    
+    if users_with_money < min_players:
+        await context.bot.send_message(
+            group_id,
+            f"🎰 Автозапуск: недостаточно игроков с балансом {price}💳 (нужно минимум {min_players})"
+        )
+        return
+    
+    # Запускаем игру
+    game = Game()
+    chat_data['game'] = game
+    chat_data['owner_id'] = None  # автозапуск
+    chat_data['join_count'] = 0
+    chat_data['price'] = price
+    
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join (0)", callback_data="join")]])
+    msg = await context.bot.send_message(
+        group_id,
+        f"🎰 <b>Автозапуск игры!</b> Ставка: {price}💳\nЖдём игроков ({JOIN_TIMEOUT} сек).",
+        reply_markup=kb,
+        parse_mode='HTML'
+    )
+    chat_data['join_msg_id'] = msg.message_id
+    
+    # Запускаем таймер регистрации
+    context.job_queue.run_once(
+        close_registration,
+        when=JOIN_TIMEOUT,
+        chat_id=group_id
+    )
+
+
 def main():
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
@@ -377,7 +524,8 @@ def main():
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
     app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("setprice", cmd_setprice))    
+    app.add_handler(CommandHandler("setprice", cmd_setprice))
+    app.add_handler(CommandHandler("autogame", cmd_autogame))    
 
     print("Bot up...")
     app.run_polling()
