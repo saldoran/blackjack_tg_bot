@@ -1,0 +1,79 @@
+name: Deploy Blackjack Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Позволяет запускать деплой вручную
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Send deployment start notification
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
+            -d text="♣️ Начат деплой Blackjack бота... (commit: ${{ github.sha }})" \
+            -d parse_mode="HTML"
+
+      - name: Deploy to VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no root@185.233.45.95 << 'EOF'
+            set -e
+            echo "🚀 Начинаем деплой..."
+            
+            # Переходим в директорию проекта
+            cd /home/ubuntu/Documents/projects/blackjack_tg_bot
+            
+            # Сохраняем текущий коммит для отката
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            echo "Текущий коммит: $CURRENT_COMMIT"
+            
+            # Обновляем код
+            echo "📥 Получаем обновления..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Активируем виртуальное окружение
+            echo "🐍 Активируем виртуальное окружение..."
+            source ../../venv/bin/activate
+            
+            # Обновляем зависимости
+            echo "📦 Обновляем зависимости..."
+            pip install -r requirements.txt --quiet
+            
+            # Проверяем синтаксис Python файлов
+            echo "🔍 Проверяем синтаксис..."
+            python -m py_compile main.py game.py economy.py storage.py settings.py
+            
+            # Перезапускаем бота через Sentinel
+            echo "🔄 Перезапускаем бота через Sentinel..."
+            sentinel restart blackjack_bot
+            
+            echo "✅ Blackjack бот успешно обновлён и перезапущен!"
+          EOF
+
+      - name: Send deployment success notification
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
+            -d text="✅ <b>Blackjack бот успешно обновлён!</b>%0A%0A📝 <b>Коммит:</b> <code>${{ github.sha }}</code>%0A👤 <b>Автор:</b> ${{ github.actor }}%0A⏰ <b>Время:</b> $(date '+%d.%m.%Y %H:%M:%S')" \
+            -d parse_mode="HTML"
+
+      - name: Send deployment failure notification
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
+            -d text="❌ <b>Ошибка при деплое Blackjack бота!</b>%0A%0A📝 <b>Коммит:</b> <code>${{ github.sha }}</code>%0A👤 <b>Автор:</b> ${{ github.actor }}%0A⏰ <b>Время:</b> $(date '+%d.%m.%Y %H:%M:%S')%0A%0A🔍 Проверьте логи GitHub Actions для деталей." \
+            -d parse_mode="HTML"

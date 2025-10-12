@@ -16,10 +16,13 @@ import settings
 from storage import storage
 from economy import give_daily, reward_player
 from game import Game, fmt_hand, hand_value
+from functools import partial
 
 load_dotenv()
 
 JOIN_TIMEOUT = settings.JOIN_TIMEOUT  # 60 секунд
+PLAYER_WARN_TIMEOUT = settings.PLAYER_WARN_TIMEOUT
+PLAYER_EXPIRE_TIMEOUT = settings.PLAYER_EXPIRE_TIMEOUT
 
 def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -36,6 +39,10 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     game = Game()
     context.chat_data['game'] = game
+    context.chat_data['owner_id'] = update.effective_user.id
+    context.chat_data['join_count'] = 0
+    # по умолчанию ставка = 0
+    context.chat_data.setdefault('price', settings.DEFAULT_PRICE)
     context.chat_data['join_count'] = 0
 
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join (0)", callback_data="join")]])
@@ -51,48 +58,90 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=group_id
     )
 
+async def cmd_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установить цену (ставку) для новой партии."""
+    owner = context.chat_data.get('owner_id')
+    if update.effective_user.id != owner:
+        return await update.message.reply_text("⚠ Только инициатор игры может менять ставку.")
+
+    # парсим аргумент
+    if not context.args or not context.args[0].isdigit():
+        return await update.message.reply_text("Использование: /setprice <цена>")
+    price = int(context.args[0], settings.DEFAULT_PRICE)
+    if price < 0:
+        return await update.message.reply_text("Цена должна быть неотрицательной.")
+
+    context.chat_data['price'] = price
+    await update.message.reply_text(f"💰 Ставка для этой игры установлена: {price}💳")
+
 
 async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = query.from_user
-    group_id = update.effective_chat.id
-    game: Game = context.chat_data.get('game')
+    query   = update.callback_query
+    user    = query.from_user
+    group_id= update.effective_chat.id
+    game    = context.chat_data.get('game')
+    price   = context.chat_data.get('price', 0)
+    udata   = storage.get_user(group_id, user.id, user.first_name)
 
+    # 1) Проверяем ставку
+    if udata['money'] < price:
+        return await query.answer(
+            f"У вас недостаточно фишек (ставка {price}, у вас {udata['money']})",
+            show_alert=True
+        )
+
+    # 2) Проверяем состояние игры
     if not game or game.started:
         return await query.answer("Игра не создана или уже идёт.", show_alert=True)
 
-    if not game.add_player(user.id, user.first_name):
-        return await query.answer("Вы уже в игре.", show_alert=True)
-        
-    storage.get_user(group_id, user.id, user.first_name)
+    # 3) Списываем ставку сразу
+    storage.add_money(group_id, user.id, -price)
     storage.save()
 
+    # 4) Добавляем в игру
+    ok = game.add_player(user.id, user.first_name)
+    if not ok:
+        return await query.answer("Вы уже в игре.", show_alert=True)
+
+    # 5) Уведомляем игрока в личке
     try:
         await context.bot.send_message(
             user.id,
-            "✅ Вы присоединились к игре! Ждите раздачи карт в личном чате."
+            "✅ Вы присоединились! Ждите раздачи карт в личке."
         )
         await query.answer()
     except Forbidden:
+        # если не удалось в личку — отменяем
         game.players.pop(user.id, None)
         await query.answer()
-        await context.bot.send_message(
+        return await context.bot.send_message(
             group_id,
-            f"👤 {user.first_name}, я не могу написать вам в личку. "
-            "Пожалуйста, напишите боту /start:\n"
-            f"https://t.me/{(await context.bot.get_me()).username}"
+            f"👤 {user.first_name}, напишите боту /start в личку, чтобы играть."
         )
-        return
 
+    # 6) Публичное сообщение и обновление кнопки
     await context.bot.send_message(group_id, f"👤 {user.first_name} присоединился к игре.")
-    count = context.chat_data.get('join_count', 0) + 1
-    context.chat_data['join_count'] = count
-
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join ({count})", callback_data="join")]])
+    cnt = context.chat_data.get('join_count', 0) + 1
+    context.chat_data['join_count'] = cnt
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join ({cnt})", callback_data="join")]])
     await context.bot.edit_message_reply_markup(
         chat_id=group_id,
         message_id=context.chat_data['join_msg_id'],
         reply_markup=kb
+    )
+
+    # 7) Запланировать таймеры хода
+    # предупреждение через 30 секунд
+    context.job_queue.run_once(
+        player_warning,
+        when=PLAYER_WARN_TIMEOUT,
+        chat_id=user.id
+    )
+    # окончательный таймаут через 45 секунд (30+15)
+    context.job_queue.run_once(
+        partial(player_timeout, group_id=group_id),
+        when=PLAYER_EXPIRE_TIMEOUT,
+        chat_id=user.id
     )
 
 
@@ -133,6 +182,42 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
 
     first = game.dealer[0]
     await context.bot.send_message(group_id, f"Первая карта дилера: {first.rank}{first.suit}")
+
+async def player_warning(context: ContextTypes.DEFAULT_TYPE):
+    uid = context.job.chat_id
+    try:
+        await context.bot.send_message(
+            uid,
+            "⚠ Вы не сделали ход за 30 секунд. Не забудьте нажать кнопку!"
+        )
+    except Forbidden:
+        pass
+
+async def player_timeout(context: ContextTypes.DEFAULT_TYPE, group_id: int):
+    uid = context.job.chat_id
+    game: Game = context.application.chat_data[group_id].get('game')
+    if not game or uid not in game.players or game.players[uid]['stand']:
+        return
+
+    # помечаем как «выбыл»
+    game.players[uid]['bust'] = True
+    game.players[uid]['stand'] = True
+
+    try:
+        await context.bot.send_message(uid, "⏰ Время вышло — вы выбываете.")
+    except Forbidden:
+        pass
+
+    # информируем группу
+    name = game.players[uid]['name']
+    await context.bot.send_message(
+        group_id,
+        f"⚠ Игрок {name} не успел сделать ход и выбывает."
+    )
+
+    # если все ещё окончено, подводим итоги
+    if game.all_done():
+        await finish_game_group(context, group_id)
 
 async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     # достаём и удаляем игру
@@ -292,6 +377,7 @@ def main():
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("setprice", cmd_setprice))    
 
     print("Bot up...")
     app.run_polling()

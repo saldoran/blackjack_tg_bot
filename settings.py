@@ -6,6 +6,9 @@ DRAW_REWARD = 0          # фишек за ничью
 LOSE_PENALTY = -25       # фишек за проигрыш
 DAILY_COOLDOWN_HOURS = 24
 JOIN_TIMEOUT = 20
+DEFAULT_PRICE = 20
+PLAYER_WARN_TIMEOUT = 30
+PLAYER_EXPIRE_TIMEOUT = 45
 
 # Файл, где хранится статистика (создаётся автоматически)
 STATS_FILE = 'storage.json'
