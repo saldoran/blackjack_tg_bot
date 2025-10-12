@@ -35,26 +35,27 @@ jobs:
             # Создаем структуру директорий если её нет
             mkdir -p /Home/bots
             
-            # Переходим в директорию бота
-            cd /Home/bots/blackjack_bot
+            # Переходим в директорию ботов
+            cd /Home/bots
             
             # Если репозиторий не существует, клонируем его
-            if [ ! -d ".git" ]; then
+            if [ ! -d "blackjack_bot/.git" ]; then
               echo "📥 Клонируем репозиторий..."
-              cd /Home/bots
               rm -rf blackjack_bot
               git clone https://github.com/saldoran/blackjack_tg_bot.git blackjack_bot
-              cd blackjack_bot
-            else
-              # Сохраняем текущий коммит для отката
-              CURRENT_COMMIT=$(git rev-parse HEAD)
-              echo "Текущий коммит: $CURRENT_COMMIT"
-              
-              # Обновляем код
-              echo "📥 Получаем обновления..."
-              git fetch origin
-              git reset --hard origin/main
             fi
+            
+            # Переходим в директорию бота
+            cd blackjack_bot
+            
+            # Сохраняем текущий коммит для отката
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            echo "Текущий коммит: $CURRENT_COMMIT"
+            
+            # Обновляем код
+            echo "📥 Получаем обновления..."
+            git fetch origin
+            git reset --hard origin/main
             
             # Создаем виртуальное окружение если его нет
             if [ ! -d "../../venv" ]; then
