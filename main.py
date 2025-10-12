@@ -2,6 +2,7 @@
 
 from dotenv import load_dotenv
 import os
+import logging
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -13,6 +14,20 @@ from telegram.ext import (
 from telegram.error import Forbidden
 
 import settings
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+def is_admin(user_id: int) -> bool:
+    """Проверка является ли пользователь администратором"""
+    admin_id = os.getenv('TELEGRAM_ADMIN_ID')
+    if not admin_id:
+        return False
+    return user_id == int(admin_id)
 from storage import storage
 from economy import give_daily, reward_player
 from game import Game, fmt_hand, hand_value
@@ -68,9 +83,13 @@ Join - присоединиться к игре (игрок)
 
 async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    logger.info(f"New game requested by user {user_id} in group {group_id}")
     
     # Проверяем, не запущена ли уже игра
     if context.chat_data.get('game'):
+        logger.info(f"Game already active in group {group_id}")
         return await update.message.reply_text("⚠️ Игра уже запущена! Дождитесь окончания текущей игры.")
     
     game = Game()
@@ -118,6 +137,8 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game    = context.chat_data.get('game')
     price   = context.chat_data.get('price', 0)
     udata   = storage.get_user(group_id, user.id, user.first_name)
+    
+    logger.info(f"User {user.id} ({user.first_name}) joined game in group {group_id}, price: {price}")
 
     # 1) Проверяем ставку
     if udata['money'] < price:
@@ -213,7 +234,8 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         context.job_queue.run_once(
             player_warning,
             when=PLAYER_WARN_TIMEOUT,
-            chat_id=uid
+            chat_id=uid,
+            data={'group_id': group_id}
         )
         # окончательный таймаут через 45 секунд (30+15)
         context.job_queue.run_once(
@@ -228,12 +250,23 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
 
 async def player_warning(context: ContextTypes.DEFAULT_TYPE):
     uid = context.job.chat_id
+    group_id = context.job.data.get('group_id') if hasattr(context.job, 'data') else None
+    
+    # Проверяем, активна ли еще игра
+    if group_id:
+        game = context.application.chat_data.get(group_id, {}).get('game')
+        if not game or not game.started or uid not in game.players:
+            logger.info(f"Game ended, skipping warning for user {uid}")
+            return
+    
     try:
         await context.bot.send_message(
             uid,
             "⚠ Вы не сделали ход за 30 секунд. Не забудьте нажать кнопку!"
         )
+        logger.info(f"Sent warning to user {uid}")
     except Forbidden:
+        logger.warning(f"Cannot send warning to user {uid} - forbidden")
         pass
 
 async def player_timeout(context: ContextTypes.DEFAULT_TYPE, group_id: int):
@@ -290,6 +323,8 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, group_id = query.data.split(":")
     group_id = int(group_id)
     uid = query.from_user.id
+    
+    logger.info(f"User {uid} performed action '{action}' in group {group_id}")
 
     # достаём данные конкретной игры из chat_data группового чата
     game = context.application.chat_data.get(group_id, {}).get('game')
@@ -323,8 +358,18 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message_id=query.message.message_id,
                 text=f"Ваши карты: {fmt_hand(hand)} ({score})\nПеребор! Вы выбываете."
             )
+        elif score == 21:
+            # Если ровно 21 — автоматически выполняем stand
+            await context.bot.edit_message_text(
+                chat_id=uid,
+                message_id=query.message.message_id,
+                text=f"Ваши карты: {fmt_hand(hand)} ({score})\n🎯 У вас 21! Автоматически останавливаетесь."
+            )
+            # Выполняем stand автоматически
+            game.stand(uid)
+            await context.bot.send_message(group_id, f"{game.players[uid]['name']} остановился с {score}.")
         else:
-            # Если не перебор — обновляем сообщение с новыми картами и новыми кнопками
+            # Если не перебор и не 21 — обновляем сообщение с новыми картами и новыми кнопками
             await context.bot.edit_message_text(
                 chat_id=uid,
                 message_id=query.message.message_id,
@@ -403,6 +448,18 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c = storage.chat_stats(group_id)
     await update.message.reply_text(f"Всего игр сыграно: {c['games_played']}")
 
+
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Остановить бота (только для админа)"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        logger.warning(f"Non-admin user {user_id} tried to use /stop command")
+        return await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+    
+    logger.info(f"Admin {user_id} requested bot stop")
+    await update.message.reply_text("🛑 Останавливаю бота...")
+    context.application.stop_running()
 
 async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тоггл автозапуска игр"""
@@ -525,7 +582,8 @@ def main():
     app.add_handler(CommandHandler("top", cmd_leaderboard))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("setprice", cmd_setprice))
-    app.add_handler(CommandHandler("autogame", cmd_autogame))    
+    app.add_handler(CommandHandler("autogame", cmd_autogame))
+    app.add_handler(CommandHandler("stop", cmd_stop))
 
     print("Bot up...")
     app.run_polling()

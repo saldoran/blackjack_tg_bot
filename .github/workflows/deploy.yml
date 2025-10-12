@@ -87,6 +87,12 @@ jobs:
             if [ ! -f ".env" ]; then
               echo "📝 Создаем .env файл..."
               echo "TG_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+              echo "TELEGRAM_ADMIN_ID=${{ secrets.TELEGRAM_ADMIN_ID }}" >> .env
+            else
+              # Обновляем .env файл
+              echo "📝 Обновляем .env файл..."
+              echo "TG_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" > .env
+              echo "TELEGRAM_ADMIN_ID=${{ secrets.TELEGRAM_ADMIN_ID }}" >> .env
             fi
             
             # Перезапускаем бота
