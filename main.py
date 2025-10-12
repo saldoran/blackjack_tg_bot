@@ -188,11 +188,15 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
     game: Game = data.get('game')
     count = data.get('join_count', 0)
 
-    await context.bot.edit_message_reply_markup(
-        chat_id=group_id,
-        message_id=data.get('join_msg_id'),
-        reply_markup=None
-    )
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=group_id,
+            message_id=data.get('join_msg_id'),
+            reply_markup=None
+        )
+    except Exception:
+        # Игнорируем ошибки редактирования сообщения
+        pass
 
     if count < 2:
         data['game'] = None
