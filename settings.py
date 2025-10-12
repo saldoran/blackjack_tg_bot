@@ -15,6 +15,6 @@ STATS_FILE = 'storage.json'
 
 # Настройки автозапуска игр
 AUTO_GAME_ENABLED = False        # включен ли автозапуск
-AUTO_GAME_INTERVAL = 15         # интервал в секундах (по умолчанию 15 секунд для дебага)
+AUTO_GAME_INTERVAL = 3600       # интервал в секундах (1 час)
 AUTO_GAME_PRICE = 20            # ставка для автозапуска
 AUTO_GAME_MIN_PLAYERS = 2       # минимальное количество игроков для автозапуска
