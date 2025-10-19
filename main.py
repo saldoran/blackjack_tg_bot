@@ -65,34 +65,29 @@ def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! /newgame чтобы начать новую игру в 21.")
 
-@admin_only
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать справку по командам"""
     help_text = """🃏 <b>Blackjack Bot - Справка по командам</b>
 
 <b>🎮 Игровые команды:</b>
-/newgame - создать новую игру (админ)
-Join - присоединиться к игре (игрок)
-/deal - начать раздачу карт (админ)
-/hit - взять карту (игрок)
-/stand - остановиться (игрок)
+Join - присоединиться к игре
 
 <b>💰 Экономика:</b>
-/daily - получить ежедневный бонус (любой)
-/balance - мой баланс и статистика (любой)
-/leaderboard - топ-5 по деньгам (любой)
-/stats - сколько игр сыграно в чате (любой)
-
-<b>⚙️ Настройки:</b>
-/setprice &lt;ставка&gt; - установить ставку для игры (админ)
-/autogame - настройки автозапуска игр (админ)
+/daily - получить ежедневный бонус
+/balance - мой баланс и статистика
+/leaderboard - топ-5 по деньгам
+/stats - сколько игр сыграно в чате
 
 <b>ℹ️ Как играть:</b>
-1. Админ создает игру командой /newgame
-2. Игроки нажимают Join для участия
-3. Админ начинает раздачу командой /deal
-4. Игроки получают карты в личку и делают ходы
-5. Победитель получает награду!"""
+1. Дождитесь создания игры администратором
+2. Нажмите кнопку Join для участия
+3. Получите карты в личку и делайте ходы
+4. Победитель получает награду!
+
+<b>💡 Подсказки:</b>
+• Цель игры - набрать 21 очко или близко к этому числу
+• Если наберете больше 21 - проиграете
+• Кнопки управления игрой приходят в личные сообщения"""
     
     await update.message.reply_text(help_text, parse_mode='HTML')
 
@@ -435,8 +430,6 @@ async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first = game.dealer[0]
     await update.message.reply_text(f"Первая карта дилера: {first.rank}{first.suit}")
 
-
-@admin_only
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     group_id = update.effective_chat.id
@@ -446,8 +439,6 @@ async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"Бонус уже получен. Попробуйте через {rem} ч.")
 
-
-@admin_only
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     group_id = update.effective_chat.id
@@ -467,7 +458,6 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-@admin_only
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     c = storage.chat_stats(group_id)
