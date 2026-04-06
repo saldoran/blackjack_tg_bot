@@ -17,4 +17,4 @@ STATS_FILE = 'storage.json'
 AUTO_GAME_ENABLED = False        # включен ли автозапуск
 AUTO_GAME_INTERVAL = 3600       # интервал в секундах (1 час)
 AUTO_GAME_PRICE = 20            # ставка для автозапуска
-AUTO_GAME_MIN_PLAYERS = 2       # минимальное количество игроков для автозапуска
+AUTO_GAME_MIN_PLAYERS = 1       # минимальное количество игроков для автозапуска

@@ -227,7 +227,7 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         # Игнорируем ошибки редактирования сообщения
         pass
 
-    if count < 2:
+    if count < 1:
         price = data.get('price', 0)
         if game and price > 0:
             for uid in game.players:
@@ -236,7 +236,7 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         data['game'] = None
         return await context.bot.send_message(
             group_id,
-            f"⏱ Регистрация завершена — зарегистрировался {count} игрок(ов). Нужно минимум 2. Игра отменена."
+            f"⏱ Регистрация завершена — никто не присоединился. Игра отменена."
         )
 
     names = [p['name'] for p in game.players.values()]
@@ -589,12 +589,30 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
 
 
 
+async def restore_autogames(app):
+    """Восстановить автозапуск игр из storage после рестарта бота."""
+    for chat_id_str, group_data in storage._data.items():
+        if not isinstance(group_data, dict):
+            continue
+        if not group_data.get('auto_game_enabled', False):
+            continue
+        chat_id = int(chat_id_str)
+        interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
+        job = app.job_queue.run_repeating(
+            auto_start_game,
+            interval=interval,
+            chat_id=chat_id,
+            first=interval
+        )
+        app.chat_data.setdefault(chat_id, {})['auto_game_job'] = job
+        logger.info(f"Restored autogame for chat {chat_id}, interval={interval}s")
+
+
 def main():
     token = os.getenv("TG_BOT_TOKEN")
     if not token:
         raise RuntimeError("Установите TG_BOT_TOKEN")
-    app = ApplicationBuilder().token(token).build()
-    
+    app = ApplicationBuilder().post_init(restore_autogames).token(token).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
