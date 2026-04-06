@@ -141,14 +141,47 @@ def set_group_setting(group_id, key, value):
     storage.save()
 
 
+def fmt_interval(seconds):
+    """Форматировать интервал в человекочитаемый вид."""
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    if h and m:
+        return f"{h}ч {m}м"
+    if h:
+        return f"{h}ч"
+    return f"{m}м"
+
+
+def make_setup_text(group_id, context=None):
+    """Текст настроек с инфо о следующем автозапуске."""
+    autogame = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
+    text = "⚙️ Настройки"
+    if autogame and context:
+        job = context.chat_data.get('auto_game_job')
+        if job and job.next_t:
+            import datetime
+            now = datetime.datetime.now(datetime.timezone.utc)
+            delta = job.next_t - now
+            total_sec = max(0, int(delta.total_seconds()))
+            m, s = divmod(total_sec, 60)
+            h, m = divmod(m, 60)
+            if h:
+                text += f"\n\n🕐 След. автозапуск через {h}ч {m}м"
+            else:
+                text += f"\n\n🕐 След. автозапуск через {m}м {s}с"
+    return text
+
+
 def make_setup_kb(group_id):
     """Создать клавиатуру настроек."""
     autogame = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
     price = get_group_setting(group_id, 'auto_game_price', settings.AUTO_GAME_PRICE)
     timeout = get_group_setting(group_id, 'join_timeout', settings.JOIN_TIMEOUT)
+    interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
     autogame_label = "🎰 Автозапуск: ВКЛ" if autogame else "🎰 Автозапуск: ВЫКЛ"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(autogame_label, callback_data="setup_autogame")],
+        [InlineKeyboardButton(f"🔄 Интервал: {fmt_interval(interval)}", callback_data="setup_interval")],
         [InlineKeyboardButton(f"💰 Ставка: {price}💳", callback_data="setup_price")],
         [InlineKeyboardButton(f"⏱ Ожидание: {timeout} сек", callback_data="setup_timeout")],
     ])
@@ -159,7 +192,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         return await update.message.reply_text("Эта команда работает только в группе.")
     group_id = update.effective_chat.id
-    await update.message.reply_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+    await update.message.reply_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
 async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,7 +217,7 @@ async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             context.chat_data['auto_game_job'] = job
 
-    await query.edit_message_reply_markup(reply_markup=make_setup_kb(group_id))
+    await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
 async def cb_setup_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,7 +247,7 @@ async def cb_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price = int(query.data.split(":")[1])
     set_group_setting(group_id, 'auto_game_price', price)
     context.chat_data['price'] = price
-    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+    await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
 async def cb_setup_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,7 +276,43 @@ async def cb_settimeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     timeout = int(query.data.split(":")[1])
     set_group_setting(group_id, 'join_timeout', timeout)
-    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+    await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
+
+
+async def cb_setup_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("30м", callback_data="setinterval:1800"),
+            InlineKeyboardButton("1ч", callback_data="setinterval:3600"),
+            InlineKeyboardButton("2ч", callback_data="setinterval:7200"),
+            InlineKeyboardButton("3ч", callback_data="setinterval:10800"),
+            InlineKeyboardButton("6ч", callback_data="setinterval:21600"),
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="setup_back")],
+    ])
+    await query.edit_message_text("🔄 Выберите интервал автозапуска:", reply_markup=kb)
+
+
+async def cb_setinterval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    group_id = update.effective_chat.id
+    interval = int(query.data.split(":")[1])
+    set_group_setting(group_id, 'auto_game_interval', interval)
+    # Перезапускаем job если автозапуск включён
+    if context.chat_data.get('auto_game_job'):
+        context.chat_data['auto_game_job'].schedule_removal()
+        job = context.job_queue.run_repeating(
+            auto_start_game, interval=interval, chat_id=group_id, first=interval
+        )
+        context.chat_data['auto_game_job'] = job
+    await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
 async def cb_setup_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,7 +321,7 @@ async def cb_setup_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
-    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+    await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
 async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -716,6 +785,8 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_setprice, pattern="^setprice:"))
     app.add_handler(CallbackQueryHandler(cb_setup_timeout, pattern="^setup_timeout$"))
     app.add_handler(CallbackQueryHandler(cb_settimeout, pattern="^settimeout:"))
+    app.add_handler(CallbackQueryHandler(cb_setup_interval, pattern="^setup_interval$"))
+    app.add_handler(CallbackQueryHandler(cb_setinterval, pattern="^setinterval:"))
     app.add_handler(CallbackQueryHandler(cb_setup_back, pattern="^setup_back$"))
 
     print("Bot up...")
