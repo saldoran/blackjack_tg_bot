@@ -24,11 +24,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def is_admin(user_id: int) -> bool:
-    """Проверка является ли пользователь администратором"""
-    admin_id = os.getenv('TELEGRAM_ADMIN_ID')
-    if not admin_id:
+    """Проверка является ли пользователь администратором (поддержка списка через запятую)"""
+    admin_ids = os.getenv('TELEGRAM_ADMIN_ID', '')
+    if not admin_ids:
         return False
-    return user_id == int(admin_id)
+    return user_id in [int(x.strip()) for x in admin_ids.split(',') if x.strip()]
 
 def admin_only(func):
     """Декоратор для команд только для админа"""
