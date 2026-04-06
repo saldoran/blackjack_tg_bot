@@ -473,9 +473,11 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     top = storage.leaderboard(group_id, key="money", limit=5)
+    if not top:
+        return await update.message.reply_text("Пока нет игроков в рейтинге.")
     lines = ["🏆 Топ-5 лидеров:"]
     for i, u in enumerate(top, 1):
-        lines.append(f"{i}. {u['name']}")
+        lines.append(f"{i}. {u['name']} — {u['money']}💳")
     await update.message.reply_text("\n".join(lines))
 
 
