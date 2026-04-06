@@ -141,6 +141,25 @@ def set_group_setting(group_id, key, value):
     storage.save()
 
 
+def _autogame_name(chat_id):
+    return f"autogame_{chat_id}"
+
+
+def get_autogame_job(job_queue, chat_id):
+    jobs = job_queue.get_jobs_by_name(_autogame_name(chat_id))
+    return jobs[0] if jobs else None
+
+
+def cancel_autogame_job(job_queue, chat_id):
+    for job in job_queue.get_jobs_by_name(_autogame_name(chat_id)):
+        job.schedule_removal()
+
+
+def schedule_autogame(job_queue, chat_id, when):
+    cancel_autogame_job(job_queue, chat_id)
+    return job_queue.run_once(auto_start_game, when=when, chat_id=chat_id, name=_autogame_name(chat_id))
+
+
 def fmt_interval(seconds):
     """Форматировать интервал в человекочитаемый вид."""
     h = seconds // 3600
@@ -157,7 +176,7 @@ def make_setup_text(group_id, context=None):
     autogame = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
     text = "⚙️ Настройки"
     if autogame and context:
-        job = context.chat_data.get('auto_game_job')
+        job = get_autogame_job(context.job_queue, group_id)
         if job and job.next_t:
             import datetime
             now = datetime.datetime.now(datetime.timezone.utc)
@@ -205,17 +224,12 @@ async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enabled = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
     if enabled:
         set_group_setting(group_id, 'auto_game_enabled', False)
-        if context.chat_data.get('auto_game_job'):
-            context.chat_data['auto_game_job'].schedule_removal()
-            context.chat_data['auto_game_job'] = None
+        cancel_autogame_job(context.job_queue, group_id)
     else:
         set_group_setting(group_id, 'auto_game_enabled', True)
         interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
-        if not context.chat_data.get('auto_game_job'):
-            job = context.job_queue.run_once(
-                auto_start_game, when=interval, chat_id=group_id
-            )
-            context.chat_data['auto_game_job'] = job
+        if not get_autogame_job(context.job_queue, group_id):
+            schedule_autogame(context.job_queue, group_id, when=interval)
 
     await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
@@ -306,12 +320,8 @@ async def cb_setinterval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     interval = int(query.data.split(":")[1])
     set_group_setting(group_id, 'auto_game_interval', interval)
     # Перезапускаем job если автозапуск включён
-    if context.chat_data.get('auto_game_job'):
-        context.chat_data['auto_game_job'].schedule_removal()
-        job = context.job_queue.run_once(
-            auto_start_game, when=interval, chat_id=group_id
-        )
-        context.chat_data['auto_game_job'] = job
+    if get_autogame_job(context.job_queue, group_id):
+        schedule_autogame(context.job_queue, group_id, when=interval)
     await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
@@ -427,8 +437,7 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         # Автозапуск: никто не пришёл → следующая попытка через интервал
         if get_group_setting(group_id, 'auto_game_enabled', False):
             interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
-            job = context.job_queue.run_once(auto_start_game, when=interval, chat_id=group_id)
-            data['auto_game_job'] = job
+            schedule_autogame(context.job_queue, group_id, when=interval)
         return
 
     names = [p['name'] for p in game.players.values()]
@@ -542,10 +551,7 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
     # Автозапуск: игра сыграна → новая через 10 секунд
     if get_group_setting(chat_id, 'auto_game_enabled', False):
-        job = context.job_queue.run_once(auto_start_game, when=10, chat_id=chat_id)
-        if chat_id not in context.application.chat_data:
-            context.application.chat_data[chat_id] = {}
-        context.application.chat_data[chat_id]['auto_game_job'] = job
+        schedule_autogame(context.job_queue, chat_id, when=10)
 
 async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -717,8 +723,7 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
         )
         # Повторить через интервал
         interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
-        job = context.job_queue.run_once(auto_start_game, when=interval, chat_id=group_id)
-        chat_data['auto_game_job'] = job
+        schedule_autogame(context.job_queue, group_id, when=interval)
         return
     
     # Запускаем игру
@@ -757,14 +762,12 @@ async def restore_autogames(app):
             continue
         chat_id = int(chat_id_str)
         interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-        job = app.job_queue.run_once(
+        app.job_queue.run_once(
             auto_start_game,
             when=interval,
-            chat_id=chat_id
+            chat_id=chat_id,
+            name=_autogame_name(chat_id)
         )
-        if chat_id not in app.chat_data:
-            app.chat_data[chat_id] = {}
-        app.chat_data[chat_id]['auto_game_job'] = job
         logger.info(f"Restored autogame for chat {chat_id}, interval={interval}s")
 
 
