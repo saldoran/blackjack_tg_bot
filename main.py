@@ -259,7 +259,8 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
             player_warning,
             when=PLAYER_WARN_TIMEOUT,
             chat_id=uid,
-            data={'group_id': group_id}
+            data={'group_id': group_id},
+            name=f"player_warning_{uid}"
         )
         # окончательный таймаут через 45 секунд (30+15)
         context.job_queue.run_once(
@@ -328,9 +329,9 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
     # Отменяем таймеры ходов для всех игроков
     for uid in game.players:
-        jobs = context.job_queue.get_jobs_by_name(f"player_timeout_{uid}")
-        for job in jobs:
-            job.schedule_removal()
+        for name in (f"player_warning_{uid}", f"player_timeout_{uid}"):
+            for job in context.job_queue.get_jobs_by_name(name):
+                job.schedule_removal()
 
     # Итог для чата
     result = game.results(chat_id)
