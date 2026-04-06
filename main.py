@@ -636,6 +636,23 @@ async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first = game.dealer[0]
     await update.message.reply_text(f"Первая карта дилера: {first.rank}{first.suit}")
 
+@admin_only
+async def cmd_addmoney(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выдать фишки: reply на сообщение юзера + /addmoney <сумма>"""
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("Ответьте на сообщение игрока: /addmoney <сумма>")
+    if not context.args or not context.args[0].lstrip('-').isdigit():
+        return await update.message.reply_text("Использование: /addmoney <сумма>")
+    amount = int(context.args[0])
+    target = update.message.reply_to_message.from_user
+    group_id = update.effective_chat.id
+    storage.add_money(group_id, target.id, amount)
+    storage.get_user(group_id, target.id, target.first_name)
+    storage.save()
+    user = storage.get_user(group_id, target.id)
+    await update.message.reply_text(f"💵 {target.first_name}: {'+' if amount >= 0 else ''}{amount} фишек. Баланс: {user['money']}💳")
+
+
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     group_id = update.effective_chat.id
@@ -777,6 +794,7 @@ def main():
     app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("setup", cmd_setup))
+    app.add_handler(CommandHandler("addmoney", cmd_addmoney))
     app.add_handler(CommandHandler("stop", cmd_stop))
 
     # Setup inline callbacks

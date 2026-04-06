@@ -70,7 +70,7 @@ class Game:
         dealer_bust = dealer_score > 21
         lines = [f"Дилер: {fmt_hand(self.dealer)} ({dealer_score}{' перебор' if dealer_bust else ''})"]
 
-        bank = len(self.players) * price
+        bank = (len(self.players) + 1) * price
         outcomes = {}
         for uid, p in self.players.items():
             score = hand_value(p["hand"])
