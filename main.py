@@ -610,31 +610,6 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         game.dealer_play()
         await finish_game_group(context, group_id)
 
-@admin_only
-async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == 'private':
-        return await update.message.reply_text("Эта команда работает только в группе.")
-    group_id = update.effective_chat.id
-    game: Game = context.chat_data.get('game')
-    if not game or game.started:
-        return await update.message.reply_text("Игра не создана или уже идёт.")
-    if not game.players:
-        return await update.message.reply_text("Нет игроков — никто не нажал Join.")
-
-    names = [p['name'] for p in game.players.values()]
-    await update.message.reply_text("Игроки: " + ", ".join(names))
-
-    game.started = True
-    game.deal_initial()
-    for uid, p in game.players.items():
-        await context.bot.send_message(
-            uid,
-            f"Ваши карты: {fmt_hand(p['hand'])} ({hand_value(p['hand'])})",
-            reply_markup=make_private_kb(group_id)
-        )
-
-    first = game.dealer[0]
-    await update.message.reply_text(f"Первая карта дилера: {first.rank}{first.suit}")
 
 @admin_only
 async def cmd_addmoney(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -787,7 +762,7 @@ def main():
     app.add_handler(CommandHandler("newgame", cmd_newgame))
     app.add_handler(CallbackQueryHandler(cb_join, pattern="^join$"))
     app.add_handler(CallbackQueryHandler(cb_action, pattern="^(hit|stand):"))
-    app.add_handler(CommandHandler("deal", cmd_deal))
+
 
     app.add_handler(CommandHandler("daily", cmd_daily))
     app.add_handler(CommandHandler("balance", cmd_balance))
