@@ -76,8 +76,11 @@ Join - присоединиться к игре
 <b>💰 Экономика:</b>
 /daily - получить ежедневный бонус
 /balance - мой баланс и статистика
-/leaderboard - топ-5 по деньгам
+/top - топ-5 игроков
 /stats - сколько игр сыграно в чате
+
+<b>⚙️ Админ:</b>
+/setup - настройки (ставка, автозапуск, ожидание)
 
 <b>ℹ️ Как играть:</b>
 1. Дождитесь создания игры администратором
@@ -103,42 +106,153 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.chat_data.get('game'):
         return await update.message.reply_text("⚠️ Игра уже запущена! Дождитесь окончания текущей игры.")
     
+    price = get_group_setting(group_id, 'auto_game_price', settings.DEFAULT_PRICE)
+    join_timeout = get_group_setting(group_id, 'join_timeout', settings.JOIN_TIMEOUT)
+
     game = Game()
     context.chat_data['game'] = game
     context.chat_data['owner_id'] = update.effective_user.id
     context.chat_data['join_count'] = 0
-    # по умолчанию ставка = 0
-    context.chat_data.setdefault('price', settings.DEFAULT_PRICE)
-    context.chat_data['join_count'] = 0
+    context.chat_data['price'] = price
 
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join (0)", callback_data="join")]])
     msg = await update.message.reply_text(
-        f"Новая игра! Ждём, пока игроки нажмут Join ({JOIN_TIMEOUT} сек).",
+        f"Новая игра! Ставка: {price}💳\nЖдём, пока игроки нажмут Join ({join_timeout} сек).",
         reply_markup=kb
     )
     context.chat_data['join_msg_id'] = msg.message_id
 
     context.job_queue.run_once(
         close_registration,
-        when=JOIN_TIMEOUT,
+        when=join_timeout,
         chat_id=group_id
     )
 
+def get_group_setting(group_id, key, default):
+    """Получить настройку группы из storage."""
+    group_data = storage._data.get(str(group_id), {})
+    return group_data.get(key, default)
+
+
+def set_group_setting(group_id, key, value):
+    """Сохранить настройку группы в storage."""
+    group_data = storage._data.setdefault(str(group_id), {})
+    group_data[key] = value
+    storage.save()
+
+
+def make_setup_kb(group_id):
+    """Создать клавиатуру настроек."""
+    autogame = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
+    price = get_group_setting(group_id, 'auto_game_price', settings.AUTO_GAME_PRICE)
+    timeout = get_group_setting(group_id, 'join_timeout', settings.JOIN_TIMEOUT)
+    autogame_label = "🎰 Автозапуск: ВКЛ" if autogame else "🎰 Автозапуск: ВЫКЛ"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(autogame_label, callback_data="setup_autogame")],
+        [InlineKeyboardButton(f"💰 Ставка: {price}💳", callback_data="setup_price")],
+        [InlineKeyboardButton(f"⏱ Ожидание: {timeout} сек", callback_data="setup_timeout")],
+    ])
+
+
 @admin_only
-async def cmd_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установить цену (ставку) для новой партии."""
+async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         return await update.message.reply_text("Эта команда работает только в группе.")
+    group_id = update.effective_chat.id
+    await update.message.reply_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
 
-    # парсим аргумент
-    if not context.args or not context.args[0].isdigit():
-        return await update.message.reply_text("Использование: /setprice <цена>")
-    price = int(context.args[0])
-    if price < 0:
-        return await update.message.reply_text("Цена должна быть неотрицательной.")
 
+async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    group_id = update.effective_chat.id
+
+    enabled = get_group_setting(group_id, 'auto_game_enabled', settings.AUTO_GAME_ENABLED)
+    if enabled:
+        set_group_setting(group_id, 'auto_game_enabled', False)
+        if context.chat_data.get('auto_game_job'):
+            context.chat_data['auto_game_job'].schedule_removal()
+            context.chat_data['auto_game_job'] = None
+    else:
+        set_group_setting(group_id, 'auto_game_enabled', True)
+        interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
+        if not context.chat_data.get('auto_game_job'):
+            job = context.job_queue.run_repeating(
+                auto_start_game, interval=interval, chat_id=group_id, first=interval
+            )
+            context.chat_data['auto_game_job'] = job
+
+    await query.edit_message_reply_markup(reply_markup=make_setup_kb(group_id))
+
+
+async def cb_setup_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("0", callback_data="setprice:0"),
+            InlineKeyboardButton("10", callback_data="setprice:10"),
+            InlineKeyboardButton("20", callback_data="setprice:20"),
+            InlineKeyboardButton("50", callback_data="setprice:50"),
+            InlineKeyboardButton("100", callback_data="setprice:100"),
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="setup_back")],
+    ])
+    await query.edit_message_text("💰 Выберите ставку:", reply_markup=kb)
+
+
+async def cb_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    group_id = update.effective_chat.id
+    price = int(query.data.split(":")[1])
+    set_group_setting(group_id, 'auto_game_price', price)
     context.chat_data['price'] = price
-    await update.message.reply_text(f"💰 Ставка для этой игры установлена: {price}💳")
+    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+
+
+async def cb_setup_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("30с", callback_data="settimeout:30"),
+            InlineKeyboardButton("60с", callback_data="settimeout:60"),
+            InlineKeyboardButton("90с", callback_data="settimeout:90"),
+            InlineKeyboardButton("120с", callback_data="settimeout:120"),
+            InlineKeyboardButton("180с", callback_data="settimeout:180"),
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="setup_back")],
+    ])
+    await query.edit_message_text("⏱ Выберите время ожидания игроков:", reply_markup=kb)
+
+
+async def cb_settimeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    group_id = update.effective_chat.id
+    timeout = int(query.data.split(":")[1])
+    set_group_setting(group_id, 'join_timeout', timeout)
+    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
+
+
+async def cb_setup_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not is_admin(query.from_user.id):
+        return await query.answer("Только для админа.", show_alert=True)
+    await query.answer()
+    group_id = update.effective_chat.id
+    await query.edit_message_text("⚙️ Настройки", reply_markup=make_setup_kb(group_id))
 
 
 async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -470,16 +584,15 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_id = update.effective_chat.id
     top = storage.leaderboard(group_id, key="money", limit=5)
     if not top:
         return await update.message.reply_text("Пока нет игроков в рейтинге.")
-    lines = ["🏆 Топ-5 лидеров:"]
+    lines = ["🏆 Топ-5:"]
     for i, u in enumerate(top, 1):
-        lines.append(f"{i}. {u['name']} — {u['money']}💳")
+        lines.append(f"{i}. {u['name']}")
     await update.message.reply_text("\n".join(lines))
-
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -493,50 +606,6 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Остановить бота (только для админа)"""
     await update.message.reply_text("🛑 Останавливаю бота...")
     context.application.stop_running()
-
-@admin_only
-async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Тоггл автозапуска игр (только для админа)"""
-    if update.effective_chat.type == 'private':
-        return await update.message.reply_text("Эта команда работает только в группе.")
-    group_id = update.effective_chat.id
-    
-    # Получаем настройки из storage (сохраняются между перезапусками)
-    group_data = storage._data.get(str(group_id), {})
-    enabled = group_data.get('auto_game_enabled', settings.AUTO_GAME_ENABLED)
-    interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-    price = group_data.get('auto_game_price', settings.AUTO_GAME_PRICE)
-    
-    # Переключаем состояние
-    if enabled:
-        # Выключаем
-        group_data['auto_game_enabled'] = False
-        storage._data[str(group_id)] = group_data
-        storage.save()
-        
-        if context.chat_data.get('auto_game_job'):
-            context.chat_data['auto_game_job'].schedule_removal()
-            context.chat_data['auto_game_job'] = None
-        await update.message.reply_text("❌ Автозапуск игр выключен!")
-    else:
-        # Включаем
-        group_data['auto_game_enabled'] = True
-        storage._data[str(group_id)] = group_data
-        storage.save()
-        
-        if not context.chat_data.get('auto_game_job'):
-            job = context.job_queue.run_repeating(
-                auto_start_game,
-                interval=interval,
-                chat_id=group_id,
-                first=interval
-            )
-            context.chat_data['auto_game_job'] = job
-        
-        hours = interval // 3600
-        minutes = (interval % 3600) // 60
-        await update.message.reply_text(f"✅ Автозапуск игр включен!\n⏰ Интервал: {hours}ч {minutes}м\n💰 Ставка: {price}💳")
-
 
 async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     """Автоматический запуск игры"""
@@ -581,19 +650,21 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     chat_data['join_count'] = 0
     chat_data['price'] = price
     
+    join_timeout = get_group_setting(group_id, 'join_timeout', settings.JOIN_TIMEOUT)
+
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join (0)", callback_data="join")]])
     msg = await context.bot.send_message(
         group_id,
-        f"🎰 <b>Автозапуск игры!</b> Ставка: {price}💳\nЖдём игроков ({JOIN_TIMEOUT} сек).",
+        f"🎰 <b>Автозапуск игры!</b> Ставка: {price}💳\nЖдём игроков ({join_timeout} сек).",
         reply_markup=kb,
         parse_mode='HTML'
     )
     chat_data['join_msg_id'] = msg.message_id
-    
+
     # Запускаем таймер регистрации
     context.job_queue.run_once(
         close_registration,
-        when=JOIN_TIMEOUT,
+        when=join_timeout,
         chat_id=group_id
     )
 
@@ -633,11 +704,18 @@ def main():
 
     app.add_handler(CommandHandler("daily", cmd_daily))
     app.add_handler(CommandHandler("balance", cmd_balance))
-    app.add_handler(CommandHandler("top", cmd_leaderboard))
+    app.add_handler(CommandHandler("top", cmd_top))
     app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("setprice", cmd_setprice))
-    app.add_handler(CommandHandler("autogame", cmd_autogame))
+    app.add_handler(CommandHandler("setup", cmd_setup))
     app.add_handler(CommandHandler("stop", cmd_stop))
+
+    # Setup inline callbacks
+    app.add_handler(CallbackQueryHandler(cb_setup_autogame, pattern="^setup_autogame$"))
+    app.add_handler(CallbackQueryHandler(cb_setup_price, pattern="^setup_price$"))
+    app.add_handler(CallbackQueryHandler(cb_setprice, pattern="^setprice:"))
+    app.add_handler(CallbackQueryHandler(cb_setup_timeout, pattern="^setup_timeout$"))
+    app.add_handler(CallbackQueryHandler(cb_settimeout, pattern="^settimeout:"))
+    app.add_handler(CallbackQueryHandler(cb_setup_back, pattern="^setup_back$"))
 
     print("Bot up...")
     app.run_polling()
