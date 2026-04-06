@@ -543,7 +543,9 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     # Автозапуск: игра сыграна → новая через 10 секунд
     if get_group_setting(chat_id, 'auto_game_enabled', False):
         job = context.job_queue.run_once(auto_start_game, when=10, chat_id=chat_id)
-        context.application.chat_data.setdefault(chat_id, {})['auto_game_job'] = job
+        if chat_id not in context.application.chat_data:
+            context.application.chat_data[chat_id] = {}
+        context.application.chat_data[chat_id]['auto_game_job'] = job
 
 async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -760,7 +762,9 @@ async def restore_autogames(app):
             when=interval,
             chat_id=chat_id
         )
-        app.chat_data.setdefault(chat_id, {})['auto_game_job'] = job
+        if chat_id not in app.chat_data:
+            app.chat_data[chat_id] = {}
+        app.chat_data[chat_id]['auto_game_job'] = job
         logger.info(f"Restored autogame for chat {chat_id}, interval={interval}s")
 
 
