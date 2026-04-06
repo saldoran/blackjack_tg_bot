@@ -71,31 +71,38 @@ class Game:
         lines = [f"Дилер: {fmt_hand(self.dealer)} ({dealer_score}{' перебор' if dealer_bust else ''})"]
 
         bank = (len(self.players) + 1) * price
+
+        # Лучший счёт среди не-перебравших игроков
+        best_score = 0
+        for p in self.players.values():
+            score = hand_value(p["hand"])
+            if not p["bust"] and score > best_score:
+                best_score = score
+
         outcomes = {}
         for uid, p in self.players.items():
             score = hand_value(p["hand"])
-            if p["bust"]:
+            if p["bust"] or score < best_score:
                 outcomes[uid] = "lose"
-            elif dealer_bust or score > dealer_score:
-                outcomes[uid] = "win"
-            elif score == dealer_score:
-                outcomes[uid] = "draw"
-            else:
-                outcomes[uid] = "lose"
+            elif score == best_score:
+                # Лучший счёт — но проверяем дилера
+                if not dealer_bust and dealer_score > score:
+                    outcomes[uid] = "lose"
+                elif not dealer_bust and dealer_score == score:
+                    outcomes[uid] = "draw"
+                else:
+                    outcomes[uid] = "win"
 
         winners = [uid for uid, o in outcomes.items() if o == "win"]
         draws = [uid for uid, o in outcomes.items() if o == "draw"]
 
         if winners:
-            # Ничьи получают возврат ставки, победители делят остаток
             for uid in draws:
                 bank -= price
             win_each = bank // len(winners)
         elif draws:
-            # Нет победителей — ничьи делят весь банк
             win_each = bank // len(draws)
         else:
-            # Все проиграли — банк сгорает
             win_each = 0
 
         for uid, p in self.players.items():
