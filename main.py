@@ -3,6 +3,7 @@
 from dotenv import load_dotenv
 import os
 import logging
+import functools
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -31,6 +32,7 @@ def is_admin(user_id: int) -> bool:
 
 def admin_only(func):
     """Декоратор для команд только для админа"""
+    @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         
@@ -128,7 +130,7 @@ async def cmd_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # парсим аргумент
     if not context.args or not context.args[0].isdigit():
         return await update.message.reply_text("Использование: /setprice <цена>")
-    price = int(context.args[0], settings.DEFAULT_PRICE)
+    price = int(context.args[0])
     if price < 0:
         return await update.message.reply_text("Цена должна быть неотрицательной.")
 
@@ -174,8 +176,10 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.answer()
     except Forbidden:
-        # если не удалось в личку — отменяем
+        # если не удалось в личку — отменяем и возвращаем ставку
         game.players.pop(user.id, None)
+        storage.add_money(group_id, user.id, price)
+        storage.save()
         await query.answer()
         
         # Создаем кнопку со ссылкой на бота
@@ -224,6 +228,11 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         pass
 
     if count < 2:
+        price = data.get('price', 0)
+        if game and price > 0:
+            for uid in game.players:
+                storage.add_money(group_id, uid, price)
+            storage.save()
         data['game'] = None
         return await context.bot.send_message(
             group_id,
@@ -309,6 +318,7 @@ async def player_timeout(context: ContextTypes.DEFAULT_TYPE, group_id: int):
 
     # если все ещё окончено, подводим итоги
     if game.all_done():
+        game.dealer_play()
         await finish_game_group(context, group_id)
 
 async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
@@ -316,6 +326,12 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     game: Game = context.application.chat_data[chat_id].pop('game', None)
     if not game:
         return
+
+    # Отменяем таймеры ходов для всех игроков
+    for uid in game.players:
+        jobs = context.job_queue.get_jobs_by_name(f"player_timeout_{uid}")
+        for job in jobs:
+            job.schedule_removal()
 
     # Итог для чата
     result = game.results(chat_id)
@@ -382,7 +398,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=f"Ваши карты: {fmt_hand(hand)} ({score})\n🎯 У вас 21! Автоматически останавливаетесь."
             )
             # Выполняем stand автоматически
-            game.stand(uid)
+            game.players[uid]["stand"] = True
             await context.bot.send_message(group_id, f"{game.players[uid]['name']} остановился с {score}.")
         else:
             # Если не перебор и не 21 — обновляем сообщение с новыми картами и новыми кнопками

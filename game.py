@@ -90,6 +90,8 @@ class Game:
                 f"{name}: {fmt_hand(p['hand'])} ({score}) → {outcome.upper()} ({delta_str} фишек)"
             )
 
+        for uid in self.players:
+            storage.get_user(chat_id, uid)['games'] += 1
         storage.add_game(chat_id)
         storage.save()
         return "\n".join(lines)

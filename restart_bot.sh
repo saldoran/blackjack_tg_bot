@@ -1,4 +1,5 @@
 #!/bin/bash
-./stop_bot.sh
+BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+"$BOT_DIR/stop_bot.sh"
 sleep 1
-nohup ./run_bot.sh > /dev/null 2>&1 &
+"$BOT_DIR/run_bot.sh"

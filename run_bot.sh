@@ -1,6 +1,11 @@
 #!/bin/bash
-BOT_NAME="blackjack_bot"
+BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BOT_NAME="$(basename "$BOT_DIR")"
 PID_FILE="/tmp/${BOT_NAME}.pid"
+LOG_DIR="$BOT_DIR/logs"
+
+cd "$BOT_DIR" || exit 1
+mkdir -p "$LOG_DIR"
 
 # Проверяем, не запущен ли уже бот
 if [ -f "$PID_FILE" ]; then
@@ -9,22 +14,17 @@ if [ -f "$PID_FILE" ]; then
         echo "Бот $BOT_NAME уже запущен (PID: $PID)"
         exit 1
     else
-        # Удаляем старый PID файл
         rm -f "$PID_FILE"
     fi
 fi
 
 echo "Запуск бота $BOT_NAME..."
 
-# Переходим в директорию бота
-cd "$(dirname "$0")"
-mkdir -p logs
-
 # Активируем виртуальное окружение
-source ../../venv/bin/activate
+source venv/bin/activate 2>/dev/null || true
 
 # Запускаем бота в фоне
-nohup python main.py >> logs/bot.log 2>&1 &
+nohup python3 main.py > "$LOG_DIR/${BOT_NAME}_stdout_$(date +%Y%m%d).log" 2>&1 &
 
 # Сохраняем PID
 echo $! > "$PID_FILE"

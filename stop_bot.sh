@@ -1,5 +1,6 @@
 #!/bin/bash
-BOT_NAME="blackjack_bot"
+BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BOT_NAME="$(basename "$BOT_DIR")"
 PID_FILE="/tmp/${BOT_NAME}.pid"
 
 # Проверяем существование PID файла
