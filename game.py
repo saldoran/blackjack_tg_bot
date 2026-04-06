@@ -1,7 +1,6 @@
 # game.py
 import random
 from collections import namedtuple
-from economy import reward_player
 from storage import storage
 
 # Описание карт
@@ -66,29 +65,56 @@ class Game:
         while hand_value(self.dealer) < 17:
             self.dealer.append(self.deck.pop())
 
-    def results(self, chat_id):
+    def results(self, chat_id, price=0):
         dealer_score = hand_value(self.dealer)
         dealer_bust = dealer_score > 21
         lines = [f"Дилер: {fmt_hand(self.dealer)} ({dealer_score}{' перебор' if dealer_bust else ''})"]
 
+        bank = len(self.players) * price
+        outcomes = {}
         for uid, p in self.players.items():
             score = hand_value(p["hand"])
-            name = p["name"]
             if p["bust"]:
-                outcome = "lose"
+                outcomes[uid] = "lose"
             elif dealer_bust or score > dealer_score:
-                outcome = "win"
+                outcomes[uid] = "win"
             elif score == dealer_score:
-                outcome = "draw"
+                outcomes[uid] = "draw"
             else:
-                outcome = "lose"
+                outcomes[uid] = "lose"
 
-            delta = reward_player(chat_id, uid, outcome)
-            sign = "+" if delta >= 0 else "-"
-            delta_str = "0" if delta == 0 else f"{sign}{abs(delta)}"
+        winners = [uid for uid, o in outcomes.items() if o == "win"]
+        draws = [uid for uid, o in outcomes.items() if o == "draw"]
+
+        # Ничьи получают возврат ставки
+        for uid in draws:
+            bank -= price
+
+        # Победители делят оставшийся банк
+        win_each = bank // len(winners) if winners else 0
+
+        for uid, p in self.players.items():
+            outcome = outcomes[uid]
+            if outcome == "win":
+                delta = win_each
+                storage.add_money(chat_id, uid, delta)
+                storage.add_win(chat_id, uid)
+            elif outcome == "draw":
+                delta = price
+                storage.add_money(chat_id, uid, delta)
+            else:
+                delta = 0
+
+            score = hand_value(p["hand"])
+            name = p["name"]
+            sign = "+" if delta > 0 else ""
+            delta_str = f"{sign}{delta}" if delta != 0 else "0"
             lines.append(
                 f"{name}: {fmt_hand(p['hand'])} ({score}) → {outcome.upper()} ({delta_str} фишек)"
             )
+
+        if bank > 0:
+            lines.append(f"\n💰 Банк: {len(self.players) * price}💳")
 
         for uid in self.players:
             storage.get_user(chat_id, uid)['games'] += 1

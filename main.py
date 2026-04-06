@@ -45,7 +45,7 @@ def admin_only(func):
     
     return wrapper
 from storage import storage
-from economy import give_daily, reward_player
+from economy import give_daily
 from game import Game, fmt_hand, hand_value
 from functools import partial
 import asyncio
@@ -452,7 +452,8 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
                 job.schedule_removal()
 
     # Итог для чата
-    result = game.results(chat_id)
+    price = context.application.chat_data[chat_id].get('price', 0)
+    result = game.results(chat_id, price=price)
     await context.bot.send_message(chat_id, "🃏 Игра окончена!\n" + result)
 
     # Личный баланс каждому игроку
