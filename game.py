@@ -86,12 +86,17 @@ class Game:
         winners = [uid for uid, o in outcomes.items() if o == "win"]
         draws = [uid for uid, o in outcomes.items() if o == "draw"]
 
-        # Ничьи получают возврат ставки
-        for uid in draws:
-            bank -= price
-
-        # Победители делят оставшийся банк
-        win_each = bank // len(winners) if winners else 0
+        if winners:
+            # Ничьи получают возврат ставки, победители делят остаток
+            for uid in draws:
+                bank -= price
+            win_each = bank // len(winners)
+        elif draws:
+            # Нет победителей — ничьи делят весь банк
+            win_each = bank // len(draws)
+        else:
+            # Все проиграли — банк сгорает
+            win_each = 0
 
         for uid, p in self.players.items():
             outcome = outcomes[uid]
@@ -100,7 +105,7 @@ class Game:
                 storage.add_money(chat_id, uid, delta)
                 storage.add_win(chat_id, uid)
             elif outcome == "draw":
-                delta = price
+                delta = win_each if not winners else price
                 storage.add_money(chat_id, uid, delta)
             else:
                 delta = 0
@@ -113,8 +118,7 @@ class Game:
                 f"{name}: {fmt_hand(p['hand'])} ({score}) → {outcome.upper()} ({delta_str} фишек)"
             )
 
-        if bank > 0:
-            lines.append(f"\n💰 Банк: {len(self.players) * price}💳")
+        lines.append(f"\n💰 Банк: {(len(self.players) + 1) * price}💳")
 
         for uid in self.players:
             storage.get_user(chat_id, uid)['games'] += 1
