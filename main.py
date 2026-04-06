@@ -212,8 +212,8 @@ async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_group_setting(group_id, 'auto_game_enabled', True)
         interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
         if not context.chat_data.get('auto_game_job'):
-            job = context.job_queue.run_repeating(
-                auto_start_game, interval=interval, chat_id=group_id, first=interval
+            job = context.job_queue.run_once(
+                auto_start_game, when=interval, chat_id=group_id
             )
             context.chat_data['auto_game_job'] = job
 
@@ -308,8 +308,8 @@ async def cb_setinterval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Перезапускаем job если автозапуск включён
     if context.chat_data.get('auto_game_job'):
         context.chat_data['auto_game_job'].schedule_removal()
-        job = context.job_queue.run_repeating(
-            auto_start_game, interval=interval, chat_id=group_id, first=interval
+        job = context.job_queue.run_once(
+            auto_start_game, when=interval, chat_id=group_id
         )
         context.chat_data['auto_game_job'] = job
     await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
@@ -420,10 +420,16 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
                 storage.add_money(group_id, uid, price)
             storage.save()
         data['game'] = None
-        return await context.bot.send_message(
+        await context.bot.send_message(
             group_id,
             f"⏱ Регистрация завершена — никто не присоединился. Игра отменена."
         )
+        # Автозапуск: никто не пришёл → следующая попытка через интервал
+        if get_group_setting(group_id, 'auto_game_enabled', False):
+            interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
+            job = context.job_queue.run_once(auto_start_game, when=interval, chat_id=group_id)
+            data['auto_game_job'] = job
+        return
 
     names = [p['name'] for p in game.players.values()]
     await context.bot.send_message(
@@ -532,8 +538,12 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         try:
             await context.bot.send_message(uid, f"Ваш текущий баланс: {bal}💳")
         except Forbidden:
-            # если нельзя писать в личку – пропускаем
             pass
+
+    # Автозапуск: игра сыграна → новая через 10 секунд
+    if get_group_setting(chat_id, 'auto_game_enabled', False):
+        job = context.job_queue.run_once(auto_start_game, when=10, chat_id=chat_id)
+        context.application.chat_data.setdefault(chat_id, {})['auto_game_job'] = job
 
 async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -703,6 +713,10 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
             group_id,
             f"🎰 Автозапуск: недостаточно игроков с балансом {price}💳 (нужно минимум {min_players})"
         )
+        # Повторить через интервал
+        interval = get_group_setting(group_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
+        job = context.job_queue.run_once(auto_start_game, when=interval, chat_id=group_id)
+        chat_data['auto_game_job'] = job
         return
     
     # Запускаем игру
@@ -741,11 +755,10 @@ async def restore_autogames(app):
             continue
         chat_id = int(chat_id_str)
         interval = group_data.get('auto_game_interval', settings.AUTO_GAME_INTERVAL)
-        job = app.job_queue.run_repeating(
+        job = app.job_queue.run_once(
             auto_start_game,
-            interval=interval,
-            chat_id=chat_id,
-            first=interval
+            when=interval,
+            chat_id=chat_id
         )
         app.chat_data.setdefault(chat_id, {})['auto_game_job'] = job
         logger.info(f"Restored autogame for chat {chat_id}, interval={interval}s")
