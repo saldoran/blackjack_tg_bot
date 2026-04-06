@@ -803,7 +803,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_setup_back, pattern="^setup_back$"))
 
     print("Bot up...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
