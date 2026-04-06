@@ -95,8 +95,10 @@ Join - присоединиться к игре
 
 @admin_only
 async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("Эта команда работает только в группе.")
     group_id = update.effective_chat.id
-    
+
     # Проверяем, не запущена ли уже игра
     if context.chat_data.get('game'):
         return await update.message.reply_text("⚠️ Игра уже запущена! Дождитесь окончания текущей игры.")
@@ -125,6 +127,8 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def cmd_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установить цену (ставку) для новой партии."""
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("Эта команда работает только в группе.")
 
     # парсим аргумент
     if not context.args or not context.args[0].isdigit():
@@ -424,6 +428,8 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def cmd_deal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("Эта команда работает только в группе.")
     group_id = update.effective_chat.id
     game: Game = context.chat_data.get('game')
     if not game or game.started:
@@ -489,6 +495,8 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def cmd_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Тоггл автозапуска игр (только для админа)"""
+    if update.effective_chat.type == 'private':
+        return await update.message.reply_text("Эта команда работает только в группе.")
     group_id = update.effective_chat.id
     
     # Получаем настройки из storage (сохраняются между перезапусками)
