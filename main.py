@@ -63,9 +63,8 @@ def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
     ])
 
 
-@admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! /newgame чтобы начать новую игру в 21.")
+    await update.message.reply_text("Привет! Присоединяйтесь к игре в 21 в групповом чате.")
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать справку по командам"""
