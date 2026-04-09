@@ -22,7 +22,7 @@ jobs:
       - name: Send deployment start notification
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id=${{ vars.TG_ADMINS }} \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
             -d text="♣️ Начат деплой Blackjack бота... (commit: ${{ github.sha }})" \
             -d parse_mode="HTML"
 
@@ -107,7 +107,7 @@ jobs:
       - name: Send deployment success notification
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id=${{ vars.TG_ADMINS }} \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
             -d text="✅ <b>Blackjack бот успешно обновлён!</b>%0A%0A📝 <b>Коммит:</b> <code>${{ github.sha }}</code>%0A👤 <b>Автор:</b> ${{ github.actor }}%0A⏰ <b>Время:</b> $(date '+%d.%m.%Y %H:%M:%S')" \
             -d parse_mode="HTML"
 
@@ -115,6 +115,6 @@ jobs:
         if: failure()
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d chat_id=${{ vars.TG_ADMINS }} \
+            -d chat_id=${{ secrets.TELEGRAM_ADMIN_ID }} \
             -d text="❌ <b>Ошибка при деплое Blackjack бота!</b>%0A%0A📝 <b>Коммит:</b> <code>${{ github.sha }}</code>%0A👤 <b>Автор:</b> ${{ github.actor }}%0A⏰ <b>Время:</b> $(date '+%d.%m.%Y %H:%M:%S')%0A%0A🔍 Проверьте логи GitHub Actions для деталей." \
             -d parse_mode="HTML"
