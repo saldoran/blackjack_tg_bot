@@ -673,9 +673,15 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
     group_id = update.effective_chat.id
     u = storage.get_user(group_id, uid, name)
-    await update.message.reply_text(
-        f"👤 {name}\nБаланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
-    )
+    try:
+        await context.bot.send_message(
+            uid,
+            f"Баланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
+        )
+    except Forbidden:
+        await update.message.reply_text(
+            f"👤 {name}\nНапишите боту в ЛС, чтобы получать баланс туда."
+        )
 
 
 async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
