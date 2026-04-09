@@ -697,10 +697,9 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.effective_user.first_name
     group_id = update.effective_chat.id
     c = storage.chat_stats(group_id)
-    await update.message.reply_text(f"👤 {name}\nВсего игр сыграно: {c['games_played']}")
+    await update.message.reply_text(f"📊 Всего игр сыграно в чате: {c['games_played']}")
 
 
 @admin_only
