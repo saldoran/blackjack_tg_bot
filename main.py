@@ -393,7 +393,8 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # 6) Публичное сообщение и обновление кнопки
-    await context.bot.send_message(group_id, f"👤 {user.first_name} присоединился к игре.")
+    join_note = await context.bot.send_message(group_id, f"👤 {user.first_name} присоединился к игре.")
+    context.chat_data.setdefault('join_note_ids', []).append(join_note.message_id)
     cnt = context.chat_data.get('join_count', 0) + 1
     context.chat_data['join_count'] = cnt
     kb = InlineKeyboardMarkup([[InlineKeyboardButton(f"Join ({cnt})", callback_data="join")]])
@@ -440,10 +441,19 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
             schedule_autogame(context.job_queue, group_id, when=interval)
         return
 
+    # Удаляем сообщения анонса и "присоединился"
+    for mid in [data.get('join_msg_id')] + data.get('join_note_ids', []):
+        if mid:
+            try:
+                await context.bot.delete_message(chat_id=group_id, message_id=mid)
+            except Exception:
+                pass
+    data.pop('join_note_ids', None)
+
     names = [p['name'] for p in game.players.values()]
     await context.bot.send_message(
         group_id,
-        "⏱ Регистрация завершена. Игроки: " + ", ".join(names)
+        "🃏 Игра началась! Игроки: " + ", ".join(names)
     )
 
     game.started = True
@@ -479,11 +489,14 @@ async def player_warning(context: ContextTypes.DEFAULT_TYPE):
     uid = context.job.chat_id
     group_id = context.job.data.get('group_id') if hasattr(context.job, 'data') else None
     
-    # Проверяем, активна ли еще игра
+    # Проверяем, активна ли еще игра и не сделал ли игрок ход
     if group_id:
         game = context.application.chat_data.get(group_id, {}).get('game')
         if not game or not game.started or uid not in game.players:
             logger.info(f"Game ended, skipping warning for user {uid}")
+            return
+        if game.players[uid]['stand']:
+            logger.info(f"Player {uid} already stood, skipping warning")
             return
     
     try:
@@ -605,7 +618,6 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             # Выполняем stand автоматически
             game.players[uid]["stand"] = True
-            await context.bot.send_message(group_id, f"{game.players[uid]['name']} остановился с {score}.")
         else:
             # Если не перебор и не 21 — обновляем сообщение с новыми картами и новыми кнопками
             await context.bot.edit_message_text(
@@ -648,37 +660,41 @@ async def cmd_addmoney(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    name = update.effective_user.first_name
     group_id = update.effective_chat.id
     ok, rem = give_daily(group_id, uid)
     if ok:
-        await update.message.reply_text(f"💰 +{settings.DAILY_BONUS} фишек!")
+        await update.message.reply_text(f"👤 {name}\n💰 +{settings.DAILY_BONUS} фишек!")
     else:
-        await update.message.reply_text(f"Бонус уже получен. Попробуйте через {rem} ч.")
+        await update.message.reply_text(f"👤 {name}\nБонус уже получен. Попробуйте через {rem} ч.")
 
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    name = update.effective_user.first_name
     group_id = update.effective_chat.id
-    u = storage.get_user(group_id, uid, update.effective_user.first_name)
+    u = storage.get_user(group_id, uid, name)
     await update.message.reply_text(
-        f"Баланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
+        f"👤 {name}\nБаланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
     )
 
 
 async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.effective_user.first_name
     group_id = update.effective_chat.id
-    top = storage.leaderboard(group_id, key="money", limit=5)
+    top = storage.leaderboard(group_id, key="games", limit=5)
     if not top:
-        return await update.message.reply_text("Пока нет игроков в рейтинге.")
-    lines = ["🏆 Топ-5:"]
+        return await update.message.reply_text(f"👤 {name}\nПока нет игроков в рейтинге.")
+    lines = [f"🏆 Топ-5 ({name}):"]
     for i, u in enumerate(top, 1):
-        lines.append(f"{i}. {u['name']}")
+        lines.append(f"{i}. {u['name']} — {u.get('games', 0)} игр, {u.get('wins', 0)} побед")
     await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.effective_user.first_name
     group_id = update.effective_chat.id
     c = storage.chat_stats(group_id)
-    await update.message.reply_text(f"Всего игр сыграно: {c['games_played']}")
+    await update.message.reply_text(f"👤 {name}\nВсего игр сыграно: {c['games_played']}")
 
 
 @admin_only
