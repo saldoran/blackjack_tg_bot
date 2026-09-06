@@ -355,14 +355,14 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not game or game.started:
         return await query.answer("Игра не создана или уже идёт.", show_alert=True)
 
-    # 3) Списываем ставку сразу
-    storage.add_money(group_id, user.id, -price)
-    storage.save()
-
-    # 4) Добавляем в игру
+    # 3) Добавляем в игру
     ok = game.add_player(user.id, user.first_name)
     if not ok:
         return await query.answer("Вы уже в игре.", show_alert=True)
+
+    # 4) Списываем ставку после успешного добавления
+    storage.add_money(group_id, user.id, -price)
+    storage.save()
 
     # 5) Уведомляем игрока в личке
     try:
@@ -511,7 +511,7 @@ async def player_warning(context: ContextTypes.DEFAULT_TYPE):
 
 async def player_timeout(context: ContextTypes.DEFAULT_TYPE, group_id: int):
     uid = context.job.chat_id
-    game: Game = context.application.chat_data[group_id].get('game')
+    game: Game = context.application.chat_data.get(group_id, {}).get('game')
     if not game or uid not in game.players or game.players[uid]['stand']:
         return
 
@@ -721,7 +721,7 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Проверяем что нет активной игры
-    chat_data = context.application.chat_data.get(group_id, {})
+    chat_data = context.application.chat_data.setdefault(group_id, {})
     if chat_data.get('game'):
         return
     
