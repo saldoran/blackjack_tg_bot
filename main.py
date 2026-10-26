@@ -25,6 +25,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+# httpx пишет в лог каждый запрос вместе с токеном бота в URL
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def owner_ids() -> list[int]:
     """Владельцы бота из .env: TELEGRAM_ADMIN_ID через запятую"""
