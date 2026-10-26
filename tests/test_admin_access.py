@@ -17,9 +17,10 @@ GROUP_ANONYMOUS_BOT_ID = 1087968824
 
 def make_update(user_id, chat_type="supergroup", sender_chat=None):
     chat_id = user_id if chat_type == "private" else GROUP_ID
+    title = None if chat_type == "private" else "Группа"
     return SimpleNamespace(
-        effective_user=SimpleNamespace(id=user_id),
-        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        effective_user=SimpleNamespace(id=user_id, first_name="Игрок", username=None),
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type, title=title),
         message=SimpleNamespace(sender_chat=sender_chat, reply_text=AsyncMock()),
     )
 
@@ -42,7 +43,7 @@ def make_context(error=None):
     admins = (SimpleNamespace(user=SimpleNamespace(id=CHAT_ADMIN_ID)),)
     get_admins = AsyncMock(side_effect=error) if error else AsyncMock(return_value=admins)
     return SimpleNamespace(
-        bot=SimpleNamespace(get_chat_administrators=get_admins),
+        bot=SimpleNamespace(get_chat_administrators=get_admins, send_message=AsyncMock()),
         application=SimpleNamespace(stop_running=Mock()),
         chat_data={},
     )
@@ -85,11 +86,36 @@ class CanManageTests(unittest.TestCase):
 
 @patch.dict(os.environ, {"TELEGRAM_ADMIN_ID": str(OWNER_ID)})
 class AdminHandlersTests(unittest.TestCase):
+    def owner_report(self, context):
+        reports = [call.args[1] for call in context.bot.send_message.await_args_list if call.args[0] == OWNER_ID]
+        self.assertEqual(len(reports), 1)
+        return reports[0]
+
     def test_chat_admin_opens_setup(self):
         update = make_update(CHAT_ADMIN_ID)
+        context = make_context()
         with patch.object(main, "storage", SimpleNamespace(_data={})):
-            asyncio.run(main.cmd_setup(update, make_context()))
+            asyncio.run(main.cmd_setup(update, context))
         self.assertIn("Настройки", update.message.reply_text.await_args.args[0])
+        context.bot.send_message.assert_not_awaited()
+
+    def test_refusal_is_reported_to_owner(self):
+        context = make_context()
+        asyncio.run(main.cmd_setup(make_update(MEMBER_ID), context))
+        report = self.owner_report(context)
+        self.assertIn("/setup", report)
+        self.assertIn(str(GROUP_ID), report)
+        self.assertIn("нет среди 1 админов", report)
+
+    def test_private_refusal_reason_reaches_owner(self):
+        context = make_context()
+        asyncio.run(main.cmd_setup(make_update(CHAT_ADMIN_ID, chat_type="private"), context))
+        self.assertIn("в личке", self.owner_report(context))
+
+    def test_api_error_reason_reaches_owner(self):
+        context = make_context(error=TelegramError("Chat not found"))
+        asyncio.run(main.cmd_setup(make_update(CHAT_ADMIN_ID), context))
+        self.assertIn("Chat not found", self.owner_report(context))
 
     def test_member_cannot_open_setup(self):
         update = make_update(MEMBER_ID)

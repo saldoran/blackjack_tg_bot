@@ -25,31 +25,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def owner_ids() -> list[int]:
+    """Владельцы бота из .env: TELEGRAM_ADMIN_ID через запятую"""
+    admin_ids = os.getenv('TELEGRAM_ADMIN_ID', '')
+    return [int(x.strip()) for x in admin_ids.split(',') if x.strip()]
+
 def is_admin(user_id: int) -> bool:
     """Проверка является ли пользователь администратором (поддержка списка через запятую)"""
-    admin_ids = os.getenv('TELEGRAM_ADMIN_ID', '')
-    if not admin_ids:
-        return False
-    return user_id in [int(x.strip()) for x in admin_ids.split(',') if x.strip()]
+    return user_id in owner_ids()
 
-async def can_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Управлять игрой могут админы из .env и админы группы, где пришла команда"""
+async def check_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[bool, str]:
+    """Может ли автор управлять игрой и почему: причина уходит в лог и владельцам"""
     user_id = update.effective_user.id
     if is_admin(user_id):
-        return True
+        return True, "владелец из .env"
     chat = update.effective_chat
     if chat.type == 'private':
-        return False
-    # Анонимный админ пишет от имени самой группы
+        return False, "команда в личке боту"
     message = update.message
-    if message and message.sender_chat and message.sender_chat.id == chat.id:
-        return True
+    if message and message.sender_chat:
+        # Анонимный админ пишет от имени самой группы
+        if message.sender_chat.id == chat.id:
+            return True, "анонимный админ"
+        return False, f"команда от имени канала {message.sender_chat.id}"
     try:
         admins = await context.bot.get_chat_administrators(chat.id)
     except TelegramError as e:
         logger.warning(f"Failed to get admins of chat {chat.id}: {e}")
-        return False
-    return any(member.user.id == user_id for member in admins)
+        return False, f"Telegram не отдал список админов: {e}"
+    if any(member.user.id == user_id for member in admins):
+        return True, "админ группы"
+    return False, f"нет среди {len(admins)} админов группы"
+
+async def can_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Управлять игрой могут админы из .env и админы группы, где пришла команда"""
+    allowed, _ = await check_manage(update, context)
+    return allowed
 
 def refusal_text(update: Update) -> str:
     """Отказ с подсказкой: почему команда не прошла и что сделать"""
@@ -61,18 +72,38 @@ def refusal_text(update: Update) -> str:
         return "❌ Команда пришла от имени канала. Отправьте её от своего имени."
     return "❌ Эта команда только для админов группы."
 
+def refusal_report(update: Update, command: str, reason: str) -> str:
+    """Отчёт владельцу об отказе: кто, где и почему"""
+    user = update.effective_user
+    chat = update.effective_chat
+    username = f"@{user.username}, " if user.username else ""
+    place = f"{chat.title} ({chat.type}, id {chat.id})" if chat.title else f"личка (id {chat.id})"
+    return f"🔍 Отказ в /{command}\nКто: {user.first_name} ({username}id {user.id})\nЧат: {place}\nПричина: {reason}"
+
+async def notify_owners(context: ContextTypes.DEFAULT_TYPE, text: str):
+    """Диагностика в личку владельцам из .env"""
+    for owner_id in owner_ids():
+        try:
+            await context.bot.send_message(owner_id, text)
+        except TelegramError as e:
+            logger.warning(f"Failed to notify owner {owner_id}: {e}")
+
 def admin_only(func):
     """Декоратор для команд управления: админы из .env и админы группы"""
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         
-        if not await can_manage(update, context):
+        allowed, reason = await check_manage(update, context)
+        if not allowed:
             chat = update.effective_chat
-            logger.warning(f"Non-admin user {user_id} tried to use /{func.__name__.replace('cmd_', '')} command in chat {chat.id} ({chat.type})")
-            return await update.message.reply_text(refusal_text(update))
+            command = func.__name__.replace('cmd_', '')
+            logger.warning(f"Refused /{command} for user {user_id} in chat {chat.id} ({chat.type}): {reason}")
+            await update.message.reply_text(refusal_text(update))
+            await notify_owners(context, refusal_report(update, command, reason))
+            return
         
-        logger.info(f"Admin {user_id} used /{func.__name__.replace('cmd_', '')} command")
+        logger.info(f"Admin {user_id} used /{func.__name__.replace('cmd_', '')} command ({reason})")
         return await func(update, context)
     
     return wrapper
