@@ -27,7 +27,10 @@ class Storage:
 
     # --- Helpers --------------------------------------------------------
     def _chat(self, chat_id: int):
-        chat = self._data.setdefault(str(chat_id), {"games_played": 0, "users": {}})
+        chat = self._data.setdefault(str(chat_id), {})
+        # Запись чата могла появиться из настроек /setup раньше первой игры
+        chat.setdefault("games_played", 0)
+        chat.setdefault("users", {})
         return chat
 
     def get_user(self, chat_id: int, user_id: int, name: str | None = None):
@@ -69,6 +72,14 @@ class Storage:
 
     def chat_stats(self, chat_id: int):
         return self._chat(chat_id)
+
+    # --- Chat migration -------------------------------------------------
+    def move_chat(self, old_chat_id: int, new_chat_id: int):
+        """Группа стала супергруппой: перенести её данные на новый ID"""
+        chat = self._data.pop(str(old_chat_id), None)
+        if chat is not None:
+            self._data[str(new_chat_id)] = chat
+        self.save()
 
 # Singleton instance
 storage = Storage()

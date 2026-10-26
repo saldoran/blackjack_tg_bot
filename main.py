@@ -11,6 +11,8 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 from telegram.error import Forbidden, TelegramError
 
@@ -179,6 +181,11 @@ def schedule_autogame(job_queue, chat_id, when):
     return job_queue.run_once(auto_start_game, when=when, chat_id=chat_id, name=_autogame_name(chat_id))
 
 
+def _turn_job_names(group_id, uid):
+    # В имени есть группа: один игрок может сидеть в играх нескольких групп сразу
+    return f"player_warning_{group_id}_{uid}", f"player_timeout_{group_id}_{uid}"
+
+
 def fmt_interval(seconds):
     """Форматировать интервал в человекочитаемый вид."""
     h = seconds // 3600
@@ -278,8 +285,8 @@ async def cb_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     group_id = update.effective_chat.id
     price = int(query.data.split(":")[1])
+    # Идущая игра доигрывается по старой ставке, новая действует со следующей
     set_group_setting(group_id, 'auto_game_price', price)
-    context.chat_data['price'] = price
     await query.edit_message_text(make_setup_text(group_id, context), reply_markup=make_setup_kb(group_id))
 
 
@@ -485,20 +492,21 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Запускаем таймеры хода для каждого игрока
+        warning_name, timeout_name = _turn_job_names(group_id, uid)
         # предупреждение через 30 секунд
         context.job_queue.run_once(
             player_warning,
             when=PLAYER_WARN_TIMEOUT,
             chat_id=uid,
             data={'group_id': group_id},
-            name=f"player_warning_{uid}"
+            name=warning_name
         )
         # окончательный таймаут через 45 секунд (30+15)
         context.job_queue.run_once(
             partial(player_timeout, group_id=group_id),
             when=PLAYER_EXPIRE_TIMEOUT,
             chat_id=uid,
-            name=f"player_timeout_{uid}"
+            name=timeout_name
         )
 
     first = game.dealer[0]
@@ -563,7 +571,7 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
     # Отменяем таймеры ходов для всех игроков
     for uid in game.players:
-        for name in (f"player_warning_{uid}", f"player_timeout_{uid}"):
+        for name in _turn_job_names(chat_id, uid):
             for job in context.job_queue.get_jobs_by_name(name):
                 job.schedule_removal()
 
@@ -796,6 +804,39 @@ async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
 
 
 
+async def migrate_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Группа стала супергруппой: у чата новый ID, переносим на него данные"""
+    message = update.message
+    old_id = message.migrate_from_chat_id or message.chat.id
+    new_id = message.migrate_to_chat_id or message.chat.id
+    # Telegram шлёт событие и в старую группу, и в новую: второе застаёт перенос готовым
+    if str(old_id) not in storage._data and old_id not in context.application.chat_data:
+        return
+
+    # Кнопки и таймеры идущей игры привязаны к старому ID: отменяем её и возвращаем ставки
+    old_chat_data = context.application.chat_data.get(old_id, {})
+    game = old_chat_data.get('game')
+    if game:
+        for uid in game.players:
+            storage.add_money(old_id, uid, old_chat_data.get('price', 0))
+    for job in context.job_queue.jobs():
+        if job.chat_id == old_id:
+            job.schedule_removal()
+    context.application.drop_chat_data(old_id)
+
+    storage.move_chat(old_id, new_id)
+    if get_group_setting(new_id, 'auto_game_enabled', False):
+        interval = get_group_setting(new_id, 'auto_game_interval', settings.AUTO_GAME_INTERVAL)
+        schedule_autogame(context.job_queue, new_id, when=interval)
+    logger.info(f"Chat {old_id} migrated to {new_id}")
+
+    if game:
+        await context.bot.send_message(
+            new_id,
+            "⚠ Группа стала супергруппой, текущую игру отменили и вернули ставки."
+        )
+
+
 async def restore_autogames(app):
     """Восстановить автозапуск игр из storage после рестарта бота."""
     for chat_id_str, group_data in storage._data.items():
@@ -844,6 +885,9 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_setup_interval, pattern="^setup_interval$"))
     app.add_handler(CallbackQueryHandler(cb_setinterval, pattern="^setinterval:"))
     app.add_handler(CallbackQueryHandler(cb_setup_back, pattern="^setup_back$"))
+
+    # Группа стала супергруппой
+    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, migrate_group))
 
     print("Bot up...")
     app.run_polling(drop_pending_updates=True)
