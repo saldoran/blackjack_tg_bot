@@ -94,7 +94,17 @@ class AdminHandlersTests(unittest.TestCase):
     def test_member_cannot_open_setup(self):
         update = make_update(MEMBER_ID)
         asyncio.run(main.cmd_setup(update, make_context()))
-        self.assertIn("нет прав", update.message.reply_text.await_args.args[0])
+        self.assertIn("только для админов группы", update.message.reply_text.await_args.args[0])
+
+    def test_private_chat_refusal_points_to_group(self):
+        update = make_update(CHAT_ADMIN_ID, chat_type="private")
+        asyncio.run(main.cmd_setup(update, make_context()))
+        self.assertIn("в группе", update.message.reply_text.await_args.args[0])
+
+    def test_channel_sender_refusal_asks_to_write_as_self(self):
+        update = make_update(MEMBER_ID, sender_chat=SimpleNamespace(id=-1009999999999))
+        asyncio.run(main.cmd_setup(update, make_context()))
+        self.assertIn("от имени канала", update.message.reply_text.await_args.args[0])
 
     def test_chat_admin_presses_setup_button(self):
         update = make_callback_update(CHAT_ADMIN_ID)

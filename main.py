@@ -51,6 +51,16 @@ async def can_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
         return False
     return any(member.user.id == user_id for member in admins)
 
+def refusal_text(update: Update) -> str:
+    """Отказ с подсказкой: почему команда не прошла и что сделать"""
+    chat = update.effective_chat
+    if chat.type == 'private':
+        return "Команды управления работают в группе: отправьте команду в чате, где вы админ."
+    message = update.message
+    if message and message.sender_chat and message.sender_chat.id != chat.id:
+        return "❌ Команда пришла от имени канала. Отправьте её от своего имени."
+    return "❌ Эта команда только для админов группы."
+
 def admin_only(func):
     """Декоратор для команд управления: админы из .env и админы группы"""
     @functools.wraps(func)
@@ -58,8 +68,9 @@ def admin_only(func):
         user_id = update.effective_user.id
         
         if not await can_manage(update, context):
-            logger.warning(f"Non-admin user {user_id} tried to use /{func.__name__.replace('cmd_', '')} command")
-            return await update.message.reply_text("❌ У вас нет прав для использования этого бота.")
+            chat = update.effective_chat
+            logger.warning(f"Non-admin user {user_id} tried to use /{func.__name__.replace('cmd_', '')} command in chat {chat.id} ({chat.type})")
+            return await update.message.reply_text(refusal_text(update))
         
         logger.info(f"Admin {user_id} used /{func.__name__.replace('cmd_', '')} command")
         return await func(update, context)
