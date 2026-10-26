@@ -12,7 +12,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
-from telegram.error import Forbidden
+from telegram.error import Forbidden, TelegramError
 
 import settings
 
@@ -30,13 +30,32 @@ def is_admin(user_id: int) -> bool:
         return False
     return user_id in [int(x.strip()) for x in admin_ids.split(',') if x.strip()]
 
+async def can_manage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Управлять игрой могут админы из .env и админы группы, где пришла команда"""
+    user_id = update.effective_user.id
+    if is_admin(user_id):
+        return True
+    chat = update.effective_chat
+    if chat.type == 'private':
+        return False
+    # Анонимный админ пишет от имени самой группы
+    message = update.message
+    if message and message.sender_chat and message.sender_chat.id == chat.id:
+        return True
+    try:
+        admins = await context.bot.get_chat_administrators(chat.id)
+    except TelegramError as e:
+        logger.warning(f"Failed to get admins of chat {chat.id}: {e}")
+        return False
+    return any(member.user.id == user_id for member in admins)
+
 def admin_only(func):
-    """Декоратор для команд только для админа"""
+    """Декоратор для команд управления: админы из .env и админы группы"""
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         
-        if not is_admin(user_id):
+        if not await can_manage(update, context):
             logger.warning(f"Non-admin user {user_id} tried to use /{func.__name__.replace('cmd_', '')} command")
             return await update.message.reply_text("❌ У вас нет прав для использования этого бота.")
         
@@ -216,7 +235,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
@@ -236,7 +255,7 @@ async def cb_setup_autogame(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setup_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     kb = InlineKeyboardMarkup([
@@ -254,7 +273,7 @@ async def cb_setup_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
@@ -266,7 +285,7 @@ async def cb_setprice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setup_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     kb = InlineKeyboardMarkup([
@@ -284,7 +303,7 @@ async def cb_setup_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_settimeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
@@ -295,7 +314,7 @@ async def cb_settimeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setup_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     kb = InlineKeyboardMarkup([
@@ -313,7 +332,7 @@ async def cb_setup_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setinterval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
@@ -327,7 +346,7 @@ async def cb_setinterval(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cb_setup_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not is_admin(query.from_user.id):
+    if not await can_manage(update, context):
         return await query.answer("Только для админа.", show_alert=True)
     await query.answer()
     group_id = update.effective_chat.id
@@ -702,9 +721,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"📊 Всего игр сыграно в чате: {c['games_played']}")
 
 
-@admin_only
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Остановить бота (только для админа)"""
+    """Остановить бота (только админы из .env: бот встанет во всех чатах)"""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        logger.warning(f"Non-admin user {user_id} tried to use /stop command")
+        return await update.message.reply_text("❌ Останавливать бота может только его владелец.")
     await update.message.reply_text("🛑 Останавливаю бота...")
     context.application.stop_running()
 
