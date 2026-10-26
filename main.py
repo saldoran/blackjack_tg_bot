@@ -84,6 +84,11 @@ def make_private_kb(group_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+def chat_label(title: str | None) -> str:
+    """Первая строка личного сообщения: из какой группы игра"""
+    return f"👥 {title}\n" if title else ""
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Присоединяйтесь к игре в 21 в групповом чате.")
 
@@ -391,10 +396,12 @@ async def cb_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     storage.save()
 
     # 5) Уведомляем игрока в личке
+    # Название группы подписывает личные сообщения по ходу игры
+    context.chat_data['title'] = update.effective_chat.title
     try:
         await context.bot.send_message(
             user.id,
-            "✅ Вы присоединились! Ждите раздачи карт в личке."
+            f"{chat_label(update.effective_chat.title)}✅ Вы присоединились! Ждите раздачи карт в личке."
         )
         await query.answer()
     except Forbidden:
@@ -484,10 +491,11 @@ async def close_registration(context: ContextTypes.DEFAULT_TYPE):
 
     game.started = True
     game.deal_initial()
+    label = chat_label(data.get('title'))
     for uid, p in game.players.items():
         await context.bot.send_message(
             uid,
-            f"Ваши карты: {fmt_hand(p['hand'])} ({hand_value(p['hand'])})",
+            f"{label}Ваши карты: {fmt_hand(p['hand'])} ({hand_value(p['hand'])})",
             reply_markup=make_private_kb(group_id)
         )
         
@@ -526,10 +534,11 @@ async def player_warning(context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Player {uid} already stood, skipping warning")
             return
     
+    label = chat_label(context.application.chat_data.get(group_id, {}).get('title'))
     try:
         await context.bot.send_message(
             uid,
-            "⚠ Вы не сделали ход за 30 секунд. Не забудьте нажать кнопку!"
+            f"{label}⚠ Вы не сделали ход за 30 секунд. Не забудьте нажать кнопку!"
         )
         logger.info(f"Sent warning to user {uid}")
     except Forbidden:
@@ -546,8 +555,9 @@ async def player_timeout(context: ContextTypes.DEFAULT_TYPE, group_id: int):
     game.players[uid]['bust'] = True
     game.players[uid]['stand'] = True
 
+    label = chat_label(context.application.chat_data.get(group_id, {}).get('title'))
     try:
-        await context.bot.send_message(uid, "⏰ Время вышло — вы выбываете.")
+        await context.bot.send_message(uid, f"{label}⏰ Время вышло — вы выбываете.")
     except Forbidden:
         pass
 
@@ -581,11 +591,12 @@ async def finish_game_group(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     await context.bot.send_message(chat_id, "🃏 Игра окончена!\n" + result)
 
     # Личный баланс каждому игроку
+    label = chat_label(context.application.chat_data[chat_id].get('title'))
     for uid in game.players:
         user = storage.get_user(chat_id, uid)
         bal = user['money']
         try:
-            await context.bot.send_message(uid, f"Ваш текущий баланс: {bal}💳")
+            await context.bot.send_message(uid, f"{label}Ваш текущий баланс: {bal}💳")
         except Forbidden:
             pass
 
@@ -605,7 +616,9 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"User {uid} performed action '{action}' in group {group_id}")
 
     # достаём данные конкретной игры из chat_data группового чата
-    game = context.application.chat_data.get(group_id, {}).get('game')
+    group_data = context.application.chat_data.get(group_id, {})
+    game = group_data.get('game')
+    label = chat_label(group_data.get('title'))
 
     # Если нет игры или пользователь не в списке — скрываем кнопки и выходим
     if not game or not game.started or uid not in game.players:
@@ -614,7 +627,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=query.message.message_id,
             reply_markup=None
         )
-        return await context.bot.send_message(uid, "Игра неактивна или вы не в ней.")
+        return await context.bot.send_message(uid, f"{label}Игра неактивна или вы не в ней.")
 
     # Убираем старую клавиатуру (скрываем кнопки)
     await context.bot.edit_message_reply_markup(
@@ -634,14 +647,14 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 chat_id=uid,
                 message_id=query.message.message_id,
-                text=f"Ваши карты: {fmt_hand(hand)} ({score})\nПеребор! Вы выбываете."
+                text=f"{label}Ваши карты: {fmt_hand(hand)} ({score})\nПеребор! Вы выбываете."
             )
         elif score == 21:
             # Если ровно 21 — автоматически выполняем stand
             await context.bot.edit_message_text(
                 chat_id=uid,
                 message_id=query.message.message_id,
-                text=f"Ваши карты: {fmt_hand(hand)} ({score})\n🎯 У вас 21! Автоматически останавливаетесь."
+                text=f"{label}Ваши карты: {fmt_hand(hand)} ({score})\n🎯 У вас 21! Автоматически останавливаетесь."
             )
             # Выполняем stand автоматически
             game.players[uid]["stand"] = True
@@ -650,7 +663,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 chat_id=uid,
                 message_id=query.message.message_id,
-                text=f"Ваши карты: {fmt_hand(hand)} ({score})",
+                text=f"{label}Ваши карты: {fmt_hand(hand)} ({score})",
                 reply_markup=make_private_kb(group_id)
             )
 
@@ -659,7 +672,7 @@ async def cb_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.edit_message_text(
             chat_id=uid,
             message_id=query.message.message_id,
-            text="✋ Вы остановились."
+            text=f"{label}✋ Вы остановились."
         )
 
     # Если после хода все закончили — подводим итоги в группе
@@ -703,7 +716,7 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             uid,
-            f"Баланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
+            f"{chat_label(update.effective_chat.title)}Баланс: {u['money']} фишек\nПобед: {u['wins']}\nИгр: {u['games']}"
         )
     except Forbidden:
         await update.message.reply_text(

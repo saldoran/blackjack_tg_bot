@@ -65,7 +65,7 @@ class MainRegressionTests(unittest.TestCase):
             from_user=SimpleNamespace(id=101, first_name="Игрок"),
             answer=AsyncMock(),
         )
-        update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=777))
+        update = SimpleNamespace(callback_query=query, effective_chat=SimpleNamespace(id=777, title="Чат"))
 
         with patch.object(main, "storage", storage):
             asyncio.run(main.cb_join(update, context))

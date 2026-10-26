@@ -191,5 +191,101 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(context.bot.send_message.await_args.args[0], NEW_GROUP)
 
 
+class PrivateMessageLabelTests(unittest.TestCase):
+    LABEL = "👥 Покерный клуб\n"
+
+    def test_game_messages_name_the_group(self):
+        bot = make_bot()
+        bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=5))
+        bot.edit_message_text = AsyncMock()
+        chat_data = {"game": Game(), "price": 0, "join_msg_id": 1, "join_count": 0}
+        group = SimpleNamespace(id=GROUP_A, type="supergroup", title="Покерный клуб")
+        player = SimpleNamespace(id=PLAYER_ID, first_name="Игрок")
+        context = SimpleNamespace(
+            chat_data=chat_data,
+            bot=bot,
+            job=SimpleNamespace(chat_id=GROUP_A),
+            job_queue=FakeJobQueue(),
+            application=SimpleNamespace(chat_data={GROUP_A: chat_data}),
+        )
+        join = SimpleNamespace(from_user=player, answer=AsyncMock())
+        stand = SimpleNamespace(
+            data=f"stand:{GROUP_A}", from_user=player, message=SimpleNamespace(message_id=9), answer=AsyncMock()
+        )
+        with temp_storage():
+            asyncio.run(main.cb_join(SimpleNamespace(callback_query=join, effective_chat=group), context))
+            asyncio.run(main.close_registration(context))
+            asyncio.run(main.cb_action(SimpleNamespace(callback_query=stand), context))
+
+        texts = [call.args[1] for call in bot.send_message.await_args_list if call.args[0] == PLAYER_ID]
+        texts += [call.kwargs["text"] for call in bot.edit_message_text.await_args_list]
+        self.assertEqual(len(texts), 4)
+        for text in texts:
+            self.assertTrue(text.startswith(self.LABEL), text)
+
+    def test_hit_shows_cards_under_group_name(self):
+        game = Game()
+        game.add_player(PLAYER_ID, "Игрок")
+        game.started = True
+        game.deal_initial()
+        bot = make_bot()
+        bot.edit_message_text = AsyncMock()
+        context = SimpleNamespace(
+            bot=bot,
+            job_queue=FakeJobQueue(),
+            application=SimpleNamespace(chat_data={GROUP_A: {"game": game, "price": 0, "title": "Покерный клуб"}}),
+        )
+        hit = SimpleNamespace(
+            data=f"hit:{GROUP_A}",
+            from_user=SimpleNamespace(id=PLAYER_ID),
+            message=SimpleNamespace(message_id=9),
+            answer=AsyncMock(),
+        )
+        with temp_storage():
+            asyncio.run(main.cb_action(SimpleNamespace(callback_query=hit), context))
+        text = bot.edit_message_text.await_args.kwargs["text"]
+        self.assertTrue(text.startswith(self.LABEL + "Ваши карты: "), text)
+
+    def test_balance_names_the_group(self):
+        bot = make_bot()
+        update = SimpleNamespace(
+            effective_user=SimpleNamespace(id=PLAYER_ID, first_name="Игрок"),
+            effective_chat=SimpleNamespace(id=GROUP_A, type="supergroup", title="Покерный клуб"),
+            message=SimpleNamespace(reply_text=AsyncMock()),
+        )
+        with temp_storage():
+            asyncio.run(main.cmd_balance(update, SimpleNamespace(bot=bot)))
+        self.assertTrue(bot.send_message.await_args.args[1].startswith(self.LABEL))
+
+    def test_turn_warning_names_the_group(self):
+        game = Game()
+        game.add_player(PLAYER_ID, "Игрок")
+        game.started = True
+        bot = make_bot()
+        context = SimpleNamespace(
+            job=SimpleNamespace(chat_id=PLAYER_ID, data={"group_id": GROUP_A}),
+            application=SimpleNamespace(chat_data={GROUP_A: {"game": game, "title": "Покерный клуб"}}),
+            bot=bot,
+        )
+        asyncio.run(main.player_warning(context))
+        self.assertTrue(bot.send_message.await_args.args[1].startswith(self.LABEL))
+
+    def test_turn_timeout_names_the_group(self):
+        game = Game()
+        game.add_player(PLAYER_ID, "Игрок")
+        game.add_player(PLAYER_ID + 1, "Второй")
+        game.started = True
+        bot = make_bot()
+        context = SimpleNamespace(
+            job=SimpleNamespace(chat_id=PLAYER_ID),
+            application=SimpleNamespace(chat_data={GROUP_A: {"game": game, "title": "Покерный клуб"}}),
+            bot=bot,
+        )
+        asyncio.run(main.player_timeout(context, group_id=GROUP_A))
+        private = bot.send_message.await_args_list[0]
+        self.assertEqual(private.args[0], PLAYER_ID)
+        self.assertTrue(private.args[1].startswith(self.LABEL))
+
+
 if __name__ == "__main__":
     unittest.main()
