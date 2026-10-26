@@ -18,3 +18,6 @@ AUTO_GAME_ENABLED = False        # включен ли автозапуск
 AUTO_GAME_INTERVAL = 3600       # интервал в секундах (1 час)
 AUTO_GAME_PRICE = 20            # ставка для автозапуска
 AUTO_GAME_MIN_PLAYERS = 1       # минимальное количество игроков для автозапуска
+
+# /chats: сколько дней группа считается активной
+CHATS_ACTIVE_DAYS = 7

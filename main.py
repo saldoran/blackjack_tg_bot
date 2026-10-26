@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 import logging
 import functools
+import time
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -242,6 +243,18 @@ def fmt_interval(seconds):
     if h:
         return f"{h}ч"
     return f"{m}м"
+
+
+def fmt_ago(timestamp, now):
+    """Сколько дней назад: для списка групп в /chats"""
+    if not timestamp:
+        return "нет данных"
+    days = int((now - timestamp) // 86400)
+    if days == 0:
+        return "сегодня"
+    if days == 1:
+        return "вчера"
+    return f"{days} дн. назад"
 
 
 def make_setup_text(group_id, context=None):
@@ -793,6 +806,44 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛑 Останавливаю бота...")
     context.application.stop_running()
 
+
+async def cmd_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Владельцу в личку: в каких группах используют бота"""
+    if not is_admin(update.effective_user.id):
+        return await update.message.reply_text("❌ Команда только для владельца бота.")
+    if update.effective_chat.type != 'private':
+        return await update.message.reply_text("Список групп отправляю только в личке.")
+
+    now = time.time()
+    rows = []
+    for chat_id, data in storage.group_chats():
+        try:
+            title, available = (await context.bot.get_chat(chat_id)).title, True
+        except TelegramError as e:
+            title, available = f"недоступен ({e})", False
+        rows.append((storage.last_activity(chat_id), chat_id, title, available, data))
+    rows.sort(key=lambda row: row[0], reverse=True)
+
+    active = sum(1 for row in rows if now - row[0] < settings.CHATS_ACTIVE_DAYS * 86400)
+    unavailable = sum(1 for row in rows if not row[3])
+    lines = [f"📊 Групп в базе: {len(rows)}, активных за {settings.CHATS_ACTIVE_DAYS} дн.: {active}, недоступных: {unavailable}"]
+    for i, (last, chat_id, title, _, data) in enumerate(rows, 1):
+        autogame = "вкл" if data.get('auto_game_enabled') else "выкл"
+        lines.append(f"\n{i}. {title} (id {chat_id})")
+        lines.append(
+            f"игр {data.get('games_played', 0)}, игроков {len(data.get('users', {}))}, "
+            f"активность {fmt_ago(last, now)}, автозапуск {autogame}"
+        )
+
+    # Telegram не принимает сообщения длиннее 4096 символов
+    chunk = ""
+    for line in lines:
+        if len(chunk) + len(line) > 4000:
+            await update.message.reply_text(chunk)
+            chunk = ""
+        chunk += line + "\n"
+    await update.message.reply_text(chunk)
+
 async def auto_start_game(context: ContextTypes.DEFAULT_TYPE):
     """Автоматический запуск игры"""
     job = context.job
@@ -930,6 +981,7 @@ def main():
     app.add_handler(CommandHandler("setup", cmd_setup))
     app.add_handler(CommandHandler("addmoney", cmd_addmoney))
     app.add_handler(CommandHandler("stop", cmd_stop))
+    app.add_handler(CommandHandler("chats", cmd_chats))
 
     # Setup inline callbacks
     app.add_handler(CallbackQueryHandler(cb_setup_autogame, pattern="^setup_autogame$"))

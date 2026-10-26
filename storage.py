@@ -50,6 +50,7 @@ class Storage:
     def add_game(self, chat_id: int):
         chat = self._chat(chat_id)
         chat["games_played"] += 1
+        chat["last_game"] = time.time()
 
     def add_win(self, chat_id: int, user_id: int):
         user = self.get_user(chat_id, user_id)
@@ -72,6 +73,17 @@ class Storage:
 
     def chat_stats(self, chat_id: int):
         return self._chat(chat_id)
+
+    def group_chats(self):
+        """Группы, где бота использовали: личные чаты в список не входят"""
+        return [(int(chat_id), chat) for chat_id, chat in self._data.items()
+                if isinstance(chat, dict) and int(chat_id) < 0]
+
+    def last_activity(self, chat_id: int) -> float:
+        """Время последней игры или /daily в чате, 0 если не было ни того, ни другого"""
+        chat = self._chat(chat_id)
+        dailies = [user.get("last_daily", 0) for user in chat["users"].values()]
+        return max([chat.get("last_game", 0), *dailies])
 
     # --- Chat migration -------------------------------------------------
     def move_chat(self, old_chat_id: int, new_chat_id: int):
